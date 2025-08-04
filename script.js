@@ -153,6 +153,35 @@ if ('serviceWorker' in navigator) {
     }
 
     /**
+     * 将原始尺寸编码到密钥行中。
+     * @param {Uint8Array} keyRow - 目标密钥行.
+     * @param {number} width - 原始宽度.
+     * @param {number} height - 原始高度.
+     */
+    function encodeDimensionsToKeyRow(keyRow, width, height) {
+        // 使用 DataView 来方便地写入 32 位整数，无需手动位移
+        const view = new DataView(keyRow.buffer);
+        // 0-3 字节存储宽度
+        view.setUint32(0, width, false); // false for big-endian
+        // 4-7 字节存储高度
+        view.setUint32(4, height, false); // false for big-endian
+        // keyRow 的剩余部分可以填充随机数
+        crypto.getRandomValues(keyRow.subarray(8));
+    }
+
+    /**
+     * 从密钥行中解码出原始尺寸。
+     * @param {Uint8Array} keyRow - 包含尺寸信息的密钥行.
+     * @returns {{width: number, height: number}} - 解码出的尺寸.
+     */
+    function decodeDimensionsFromKeyRow(keyRow) {
+        const view = new DataView(keyRow.buffer);
+        const width = view.getUint32(0, false);
+        const height = view.getUint32(4, false);
+        return {width, height};
+    }
+
+    /**
      * 从一个 RGBA 像素中解码出 32 位整数。
      * @param {Uint8Array} pixelData - 包含像素数据的数组.
      * @param {number} offset - 像素的起始偏移量.
@@ -240,42 +269,40 @@ if ('serviceWorker' in navigator) {
         const blocksY = Math.ceil(height / BLOCK_SIZE);
         const totalBlocks = blocksX * blocksY;
 
-        const shuffleMap = Array.from({length: totalBlocks}, (_, i) => i);
+        const shuffleMap = Array.from({ length: totalBlocks }, (_, i) => i);
         shuffleArray(shuffleMap);
 
-        const mapPixels = totalBlocks;
-        const mapRows = Math.ceil(mapPixels / width);
-
+        const mapRows = Math.ceil(totalBlocks / width);
         const newHeight = mapRows + height + 2;
         const outputPixels = new Uint8Array(width * newHeight * CHANNELS);
 
-        for (let i = 0; i < totalBlocks; i++) {
+        // 1. 将 Shuffle Map 写入
+        for(let i=0; i<totalBlocks; i++){
             encodeNumberToPixel(shuffleMap[i], outputPixels, i * CHANNELS);
         }
 
-        const keyRow = new Uint8Array(width * CHANNELS);
-        crypto.getRandomValues(keyRow);
-        outputPixels.set(keyRow, mapRows * width * CHANNELS);
+        // 2. 创建 keyRow 并将原始尺寸编码进去
+        const keyRowOffset = mapRows * width * CHANNELS;
+        const keyRow = outputPixels.subarray(keyRowOffset, keyRowOffset + width * CHANNELS);
+        encodeDimensionsToKeyRow(keyRow, width, height);
 
+        // 3. 复制图像数据
         const imageContentStartRow = mapRows + 1;
-
         for (let i = 0; i < totalBlocks; i++) {
             const originalBlockIndex = shuffleMap[i];
-
             const srcBlockX = originalBlockIndex % blocksX;
             const srcBlockY = Math.floor(originalBlockIndex / blocksX);
-
             const destBlockX = i % blocksX;
             const destBlockY = Math.floor(i / blocksX);
 
-            // --- 修正后的调用 ---
             copyBlock(
-                pixels, width, height, 0,                         // Source: 原始像素，高度为 `height`，从第 0 行开始
-                outputPixels, width, height, imageContentStartRow, // Destination: 目标是 outputPixels，内容区高度也是 `height`，从 `imageContentStartRow` 行开始
+                pixels, width, height, 0,
+                outputPixels, width, height, imageContentStartRow,
                 destBlockX, destBlockY, srcBlockX, srcBlockY
             );
         }
 
+        // 4. 在末尾添加 Magic Row
         const magicRow = generateMagicRow(width);
         outputPixels.set(magicRow, (newHeight - 1) * width * CHANNELS);
 
@@ -315,53 +342,59 @@ if ('serviceWorker' in navigator) {
     async function decryptWithShuffle(pixels, width, height) {
         console.log("执行 Index-Shuffle 解密流程...");
 
-        // 1. 使用确定性算法反解出原始高度
-        const originalHeight = solveOriginalHeight(height, width);
+        // 1. 临时计算 mapRows 来定位 keyRow
+        // 这个计算是临时的，并且可能不精确，但足以帮我们找到 keyRow 的大致位置
+        const tempBlocksX = Math.ceil(width / BLOCK_SIZE);
+        const tempBlocksY = Math.ceil((height - 2) / BLOCK_SIZE); // 减去 key/magic
+        const tempTotalBlocks = tempBlocksX * tempBlocksY;
+        let mapRows = Math.ceil(tempTotalBlocks / width);
 
-        if (originalHeight <= 0) {
-            throw new Error("解密失败：无法确定原始图片尺寸，文件可能已损坏或格式不正确。");
+        // 2. 从 keyRow 精确解码原始尺寸
+        const keyRowOffset = mapRows * width * CHANNELS;
+        const keyRow = pixels.subarray(keyRowOffset, keyRowOffset + width * CHANNELS);
+        const { width: originalWidth, height: originalHeight } = decodeDimensionsFromKeyRow(keyRow);
+
+        // 安全校验
+        if (originalWidth !== width) {
+            throw new Error(`解密失败：宽度不匹配！文件宽度 ${width}, 存储宽度 ${originalWidth}`);
         }
-        console.log(`通过计算得出原始高度为: ${originalHeight}`);
+        if (originalHeight <= 0 || originalHeight > height) {
+            throw new Error(`解密失败：解码出的高度 ${originalHeight} 无效。`);
+        }
+        console.log(`从密钥行成功解码出原始尺寸: ${originalWidth}x${originalHeight}`);
 
-        // 2. 根据正确的原始高度，计算块和 map 的信息
-        const blocksX = Math.ceil(width / BLOCK_SIZE);
+        // 3. 使用 100% 准确的尺寸，重新计算所有参数
+        const blocksX = Math.ceil(originalWidth / BLOCK_SIZE);
         const blocksY = Math.ceil(originalHeight / BLOCK_SIZE);
         const totalBlocks = blocksX * blocksY;
-        const mapRows = Math.ceil(totalBlocks / width);
+        mapRows = Math.ceil(totalBlocks / originalWidth); // 覆盖掉临时的 mapRows
 
-        // 3. 读取 Shuffle Map
+        // 4. 读取 Shuffle Map
         const shuffleMap = new Array(totalBlocks);
-        // 安全性检查：确保读取 map 不会越界
-        if (mapRows * width * CHANNELS > pixels.length) {
-            throw new Error("解密失败：Shuffle Map 数据不完整。");
-        }
         for (let i = 0; i < totalBlocks; i++) {
             shuffleMap[i] = decodeNumberFromPixel(pixels, i * CHANNELS);
         }
 
-        // 4. 准备解密缓冲区和加密内容的起始位置
-        const decryptedPixels = new Uint8Array(width * originalHeight * CHANNELS);
+        // 5. 恢复图像
+        const decryptedPixels = new Uint8Array(originalWidth * originalHeight * CHANNELS);
         const encryptedContentStartRow = mapRows + 1;
 
-        // 5. 根据 Shuffle Map 恢复图像块
         for (let i = 0; i < totalBlocks; i++) {
             const originalBlockIndex = shuffleMap[i];
-
             const destBlockX = originalBlockIndex % blocksX;
             const destBlockY = Math.floor(originalBlockIndex / blocksX);
-
             const srcBlockX = i % blocksX;
             const srcBlockY = Math.floor(i / blocksX);
 
             copyBlock(
-                pixels, width, originalHeight, encryptedContentStartRow,
-                decryptedPixels, width, originalHeight, 0,
+                pixels, originalWidth, originalHeight, encryptedContentStartRow,
+                decryptedPixels, originalWidth, originalHeight, 0,
                 destBlockX, destBlockY, srcBlockX, srcBlockY
             );
         }
 
         console.log("Shuffle 解密完成。");
-        return UPNG.encode([decryptedPixels.buffer], width, originalHeight, 0);
+        return UPNG.encode([decryptedPixels.buffer], originalWidth, originalHeight, 0);
     }
 
     async function processImageFile(file) {
