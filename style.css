@@ -190,6 +190,11 @@ button:disabled {
     left: calc(50% - 20px);
 }
 
+.drag-over {
+    border: 2px dashed var(--primary-color) !important;
+    background-color: #f0f8ff !important;
+}
+
 @keyframes spin {
     to {
         transform: rotate(360deg);

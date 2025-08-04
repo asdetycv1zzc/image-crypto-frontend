@@ -242,6 +242,7 @@ if ('serviceWorker' in navigator) {
     const uploadButton = document.getElementById('uploadButton');
     const downloadButton = document.getElementById('downloadButton');
     const resultsGrid = document.getElementById('results');
+    const dropZone = document.querySelector('.container');
     let processedFiles = [];
 
     uploadButton.addEventListener('click', () => fileInput.click());
@@ -252,6 +253,31 @@ if ('serviceWorker' in navigator) {
         }
     });
     downloadButton.addEventListener('click', handleDownload);
+    dropZone.addEventListener('dragover', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        // [新增] 添加视觉反馈
+        dropZone.classList.add('drag-over');
+    });
+    dropZone.addEventListener('dragleave', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        dropZone.classList.remove('drag-over');
+    });
+    dropZone.addEventListener('drop', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        // 移除视觉反馈
+        dropZone.classList.remove('drag-over');
+
+        // 从事件中获取文件
+        const files = event.dataTransfer.files;
+
+        if (files.length > 0) {
+            // 直接调用您现有的文件处理函数
+            handleFileUpload(Array.from(files));
+        }
+    });
 
     function isMobileDevice() {
         // 一个简单但相当有效的正则表达式来检测移动设备
