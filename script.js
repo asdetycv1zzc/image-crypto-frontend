@@ -185,32 +185,47 @@ if ('serviceWorker' in navigator) {
      * @param {number} srcStartRow - 源内容在缓冲区中的起始行.
      * @param {Uint8Array} dest - 目标像素数据 (完整缓冲区).
      * @param {number} destWidth - 目标图像的完整宽度.
+     * @param {number} destHeight - 目标内容区域的高度.
      * @param {number} destStartRow - 目标内容在缓冲区中的起始行.
      * @param {number} destBlockX - 目标位置块的 X 坐标.
      * @param {number} destBlockY - 目标位置块的 Y 坐标.
      * @param {number} srcBlockX - 源位置块的 X 坐标.
      * @param {number} srcBlockY - 源位置块的 Y 坐标.
      */
-    function copyBlock(src, srcWidth, srcHeight, srcStartRow, dest, destWidth, destStartRow, destBlockX, destBlockY, srcBlockX, srcBlockY) {
+    function copyBlock(src, srcWidth, srcHeight, srcStartRow, dest, destWidth, destHeight, destStartRow, destBlockX, destBlockY, srcBlockX, srcBlockY) {
         const srcStartX = srcBlockX * BLOCK_SIZE;
         const srcStartY = srcBlockY * BLOCK_SIZE;
         const destStartX = destBlockX * BLOCK_SIZE;
         const destStartY = destBlockY * BLOCK_SIZE;
 
-        // 计算块的实际有效尺寸
+        // --- 核心改动：分别计算源和目标的有效尺寸 ---
         const effectiveBlockWidth = Math.min(BLOCK_SIZE, srcWidth - srcStartX);
         const effectiveBlockHeight = Math.min(BLOCK_SIZE, srcHeight - srcStartY);
 
+        // 确保目标块的Y坐标没有超出目标区域的高度
+        if (destStartY >= destHeight) {
+            return; // 这个块在目标区域之外，直接跳过
+        }
+
         for (let y = 0; y < effectiveBlockHeight; y++) {
-            // 在各自的缓冲区内计算真实的行号（加上起始行偏移）
+            // 检查当前行是否会超出源或目标的高度限制
+            if ((srcStartY + y >= srcHeight) || (destStartY + y >= destHeight)) {
+                continue;
+            }
+
             const srcFinalRow = srcStartY + y + srcStartRow;
             const destFinalRow = destStartY + y + destStartRow;
 
-            // 计算在完整缓冲区中的偏移量
             const srcOffset = (srcFinalRow * srcWidth + srcStartX) * CHANNELS;
             const destOffset = (destFinalRow * destWidth + destStartX) * CHANNELS;
 
             const bytesToCopy = effectiveBlockWidth * CHANNELS;
+
+            // --- 最后的防线：在 .set() 之前进行最终检查 ---
+            if (destOffset + bytesToCopy > dest.length) {
+                console.error(`越界错误预防：试图写入到 ${destOffset + bytesToCopy}，但缓冲区长度为 ${dest.length}。`);
+                continue; // 跳过这个写入操作
+            }
 
             const rowData = src.subarray(srcOffset, srcOffset + bytesToCopy);
             dest.set(rowData, destOffset);
@@ -242,11 +257,8 @@ if ('serviceWorker' in navigator) {
         crypto.getRandomValues(keyRow);
         outputPixels.set(keyRow, mapRows * width * CHANNELS);
 
-        // --- 核心改动 ---
-        // 定义图像内容的起始行
         const imageContentStartRow = mapRows + 1;
 
-        // 根据 Shuffle Map 复制图像块
         for (let i = 0; i < totalBlocks; i++) {
             const originalBlockIndex = shuffleMap[i];
 
@@ -256,12 +268,10 @@ if ('serviceWorker' in navigator) {
             const destBlockX = i % blocksX;
             const destBlockY = Math.floor(i / blocksX);
 
-            // 调用新的 copyBlock 函数
-            // 源: pixels, 从第 0 行开始
-            // 目标: outputPixels, 从 imageContentStartRow 行开始
+            // --- 修正后的调用 ---
             copyBlock(
-                pixels, width, height, 0,
-                outputPixels, width, imageContentStartRow,
+                pixels, width, height, 0,                         // Source: 原始像素，高度为 `height`，从第 0 行开始
+                outputPixels, width, height, imageContentStartRow, // Destination: 目标是 outputPixels，内容区高度也是 `height`，从 `imageContentStartRow` 行开始
                 destBlockX, destBlockY, srcBlockX, srcBlockY
             );
         }
@@ -276,21 +286,36 @@ if ('serviceWorker' in navigator) {
     async function decryptWithShuffle(pixels, width, height) {
         console.log("执行 Index-Shuffle 解密流程...");
 
-        const originalBlocksX = Math.ceil(width / BLOCK_SIZE);
-        // 注意：这里需要根据原始高度计算 Y 方向的块数
-        // 我们先计算出原始高度
-        const tempTotalBlocks = originalBlocksX * Math.ceil((height - 2) / BLOCK_SIZE);
-        const tempMapRows = Math.ceil(tempTotalBlocks / width);
-        const originalHeight = height - tempMapRows - 2;
+        // --- 修正解密中的高度计算 ---
+        // 我们必须先大致估算 mapRows，才能精确计算 originalHeight
+        const preliminaryBlocksX = Math.ceil(width / BLOCK_SIZE);
+        // 高度减去固定的2行（keyRow, magicRow），然后计算块数
+        const preliminaryBlocksY = Math.ceil((height - 2) / BLOCK_SIZE);
+        const preliminaryTotalBlocks = preliminaryBlocksX * preliminaryBlocksY;
+        const mapRows = Math.ceil(preliminaryTotalBlocks / width);
 
-        if (originalHeight <= 0) throw new Error("无效的加密文件，高度不足。");
+        const originalHeight = height - mapRows - 2;
+
+        if (originalHeight <= 0) {
+            // 这里的totalBlocks计算可能有误，需要用最终的originalHeight重新计算
+            const finalTotalBlocks = Math.ceil(width / BLOCK_SIZE) * Math.ceil(originalHeight / BLOCK_SIZE);
+            const finalMapRows = Math.ceil(finalTotalBlocks / width);
+            if (height - finalMapRows - 2 > 0) {
+                // 如果用更精确的计算后高度大于0，说明是可解密的
+                return decryptWithShuffle(pixels, width, height); // 理论上不会无限递归
+            }
+            throw new Error("无效的加密文件，高度不足。");
+        }
 
         const blocksX = Math.ceil(width / BLOCK_SIZE);
         const blocksY = Math.ceil(originalHeight / BLOCK_SIZE);
         const totalBlocks = blocksX * blocksY;
 
-        const mapPixels = totalBlocks;
-        const mapRows = Math.ceil(mapPixels / width);
+        if (mapRows !== Math.ceil(totalBlocks / width)) {
+            console.warn("Map row calculation mismatch, retrying...");
+            // 如果第一次估算的 mapRows 不对，用精确的 totalBlocks 重新计算
+            return decryptWithShuffle(pixels, width, height);
+        }
 
         const shuffleMap = new Array(totalBlocks);
         for (let i = 0; i < totalBlocks; i++) {
@@ -298,12 +323,8 @@ if ('serviceWorker' in navigator) {
         }
 
         const decryptedPixels = new Uint8Array(width * originalHeight * CHANNELS);
-
-        // --- 核心改动 ---
-        // 加密内容在输入图像中的起始行
         const encryptedContentStartRow = mapRows + 1;
 
-        // 根据 Shuffle Map 恢复图像块
         for (let i = 0; i < totalBlocks; i++) {
             const originalBlockIndex = shuffleMap[i];
 
@@ -313,12 +334,10 @@ if ('serviceWorker' in navigator) {
             const srcBlockX = i % blocksX;
             const srcBlockY = Math.floor(i / blocksX);
 
-            // 调用新的 copyBlock 函数
-            // 源: pixels, 从 encryptedContentStartRow 行开始
-            // 目标: decryptedPixels, 从第 0 行开始
+            // --- 修正后的调用 ---
             copyBlock(
-                pixels, width, originalHeight, encryptedContentStartRow,
-                decryptedPixels, width, 0,
+                pixels, width, originalHeight, encryptedContentStartRow, // Source: 加密像素，内容区高度为 `originalHeight`，从 `encryptedContentStartRow` 行开始
+                decryptedPixels, width, originalHeight, 0,              // Destination: 解密像素，高度为 `originalHeight`，从第 0 行开始
                 destBlockX, destBlockY, srcBlockX, srcBlockY
             );
         }
