@@ -283,48 +283,67 @@ if ('serviceWorker' in navigator) {
         return UPNG.encode([outputPixels.buffer], width, newHeight, 0);
     }
 
+    /**
+     * 通过迭代反向计算，从加密后的高度精确求解出原始高度。
+     * @param {number} encryptedHeight - 加密后的图片总高度.
+     * @param {number} width - 图片宽度.
+     * @returns {number} - 原始图片的高度，如果无解则返回 -1.
+     */
+    function solveOriginalHeight(encryptedHeight, width) {
+        const blocksX = Math.ceil(width / BLOCK_SIZE);
+
+        // 我们从可能的最高原始高度开始向下迭代
+        // 原始高度至少比加密高度小3 (1 for map, 1 for key, 1 for magic)
+        for (let h_orig = encryptedHeight - 3; h_orig > 0; h_orig--) {
+            const blocksY = Math.ceil(h_orig / BLOCK_SIZE);
+            const totalBlocks = blocksX * blocksY;
+            const mapPixels = totalBlocks;
+            const mapRows = Math.ceil(mapPixels / width);
+
+            // 检查这个假设的原始高度是否满足我们的方程
+            if (encryptedHeight === h_orig + mapRows + 2) {
+                // 找到了唯一解！
+                return h_orig;
+            }
+        }
+
+        // 如果循环结束还没找到，说明文件格式有问题
+        return -1;
+    }
+
+
     async function decryptWithShuffle(pixels, width, height) {
         console.log("执行 Index-Shuffle 解密流程...");
 
-        // --- 修正解密中的高度计算 ---
-        // 我们必须先大致估算 mapRows，才能精确计算 originalHeight
-        const preliminaryBlocksX = Math.ceil(width / BLOCK_SIZE);
-        // 高度减去固定的2行（keyRow, magicRow），然后计算块数
-        const preliminaryBlocksY = Math.ceil((height - 2) / BLOCK_SIZE);
-        const preliminaryTotalBlocks = preliminaryBlocksX * preliminaryBlocksY;
-        const mapRows = Math.ceil(preliminaryTotalBlocks / width);
-
-        const originalHeight = height - mapRows - 2;
+        // 1. 使用确定性算法反解出原始高度
+        const originalHeight = solveOriginalHeight(height, width);
 
         if (originalHeight <= 0) {
-            // 这里的totalBlocks计算可能有误，需要用最终的originalHeight重新计算
-            const finalTotalBlocks = Math.ceil(width / BLOCK_SIZE) * Math.ceil(originalHeight / BLOCK_SIZE);
-            const finalMapRows = Math.ceil(finalTotalBlocks / width);
-            if (height - finalMapRows - 2 > 0) {
-                // 如果用更精确的计算后高度大于0，说明是可解密的
-                return decryptWithShuffle(pixels, width, height); // 理论上不会无限递归
-            }
-            throw new Error("无效的加密文件，高度不足。");
+            throw new Error("解密失败：无法确定原始图片尺寸，文件可能已损坏或格式不正确。");
         }
+        console.log(`通过计算得出原始高度为: ${originalHeight}`);
 
+        // 2. 根据正确的原始高度，计算块和 map 的信息
         const blocksX = Math.ceil(width / BLOCK_SIZE);
         const blocksY = Math.ceil(originalHeight / BLOCK_SIZE);
         const totalBlocks = blocksX * blocksY;
+        const mapRows = Math.ceil(totalBlocks / width);
 
-        if (mapRows !== Math.ceil(totalBlocks / width)) {
-            console.warn("Map row calculation mismatch, retrying...");
-            // 如果第一次估算的 mapRows 不对，用精确的 totalBlocks 重新计算
-            return decryptWithShuffle(pixels, width, height);
-        }
-
+        // 3. 读取 Shuffle Map
         const shuffleMap = new Array(totalBlocks);
+        // 安全性检查：确保读取 map 不会越界
+        if (mapRows * width * CHANNELS > pixels.length) {
+            throw new Error("解密失败：Shuffle Map 数据不完整。");
+        }
         for (let i = 0; i < totalBlocks; i++) {
             shuffleMap[i] = decodeNumberFromPixel(pixels, i * CHANNELS);
         }
 
+        // 4. 准备解密缓冲区和加密内容的起始位置
         const decryptedPixels = new Uint8Array(width * originalHeight * CHANNELS);
         const encryptedContentStartRow = mapRows + 1;
 
+        // 5. 根据 Shuffle Map 恢复图像块
         for (let i = 0; i < totalBlocks; i++) {
             const originalBlockIndex = shuffleMap[i];
 
@@ -334,10 +353,9 @@ if ('serviceWorker' in navigator) {
             const srcBlockX = i % blocksX;
             const srcBlockY = Math.floor(i / blocksX);
 
-            // --- 修正后的调用 ---
             copyBlock(
-                pixels, width, originalHeight, encryptedContentStartRow, // Source: 加密像素，内容区高度为 `originalHeight`，从 `encryptedContentStartRow` 行开始
-                decryptedPixels, width, originalHeight, 0,              // Destination: 解密像素，高度为 `originalHeight`，从第 0 行开始
+                pixels, width, originalHeight, encryptedContentStartRow,
+                decryptedPixels, width, originalHeight, 0,
                 destBlockX, destBlockY, srcBlockX, srcBlockY
             );
         }
