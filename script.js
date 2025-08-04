@@ -92,6 +92,47 @@ if ('serviceWorker' in navigator) {
         throw new Error(`不支持的图片格式 (${type}) 或文件已损坏。`);
     }
 
+    function isSupportedImage(fileName) {
+        const supportedExtensions = ['.png', '.jpg', '.jpeg', '.bmp'];
+        return supportedExtensions.some(ext => fileName.toLowerCase().endsWith(ext));
+    }
+
+    async function expandAndFilterFile(file) {
+        // 如果文件本身不是 ZIP，但却是支持的图片，直接返回包含它自己的数组
+        if (isSupportedImage(file.name)) {
+            return [file];
+        }
+
+        // 如果文件是 ZIP，则尝试解压并提取所有支持的图片
+        if (file.name.toLowerCase().endsWith('.zip')) {
+            console.log(`检测到 ZIP 文件: ${file.name}，开始解压...`);
+            const zip = await JSZip.loadAsync(file);
+            const imageFilePromises = [];
+
+            zip.forEach((relativePath, zipEntry) => {
+                // 忽略文件夹，只处理文件
+                if (!zipEntry.dir && isSupportedImage(zipEntry.name)) {
+                    console.log(`在 ZIP 中找到图片: ${relativePath}`);
+                    // 异步提取文件内容为 Blob
+                    const promise = zipEntry.async('blob').then(blob => {
+                        // 将 Blob 重新包装成一个 File 对象，保留其原始路径作为新文件名
+                        // 这样即使用户上传了多个包含同名文件的 ZIP，我们也能区分
+                        const newFileName = `${file.name}/${relativePath}`;
+                        return new File([blob], newFileName, {type: blob.type});
+                    });
+                    imageFilePromises.push(promise);
+                }
+            });
+
+            // 等待所有图片文件都提取完毕
+            return Promise.all(imageFilePromises);
+        }
+
+        // 如果文件既不是支持的图片，也不是 ZIP，返回空数组表示跳过
+        console.log(`跳过不支持的文件类型: ${file.name}`);
+        return [];
+    }
+
     // 图片处理的主函数
     // 在您的 script.js 中，找到并替换这个函数
 
@@ -235,28 +276,50 @@ if ('serviceWorker' in navigator) {
         uploadButton.disabled = true;
         downloadButton.disabled = true;
 
-        files.forEach(file => createResultCard(file.name));
+        try {
+            // --- 核心改动 ---
+            // 1. 将所有上传的文件（包括 ZIP）通过扩展函数转换为一个扁平的图片文件列表
+            console.log("开始扩展文件列表...");
+            const expansionPromises = Array.from(files).map(expandAndFilterFile);
+            const nestedFileArrays = await Promise.all(expansionPromises);
+            const allImageFiles = nestedFileArrays.flat(); // [[img1], [img2, img3]] -> [img1, img2, img3]
+            console.log(`共找到 ${allImageFiles.length} 个需要处理的图片。`);
 
-        const promises = files.map(file => {
-            return processImageFile(file)
-                .then(result => {
-                    // 成功后，将结果存储起来，并更新卡片
-                    processedFiles.push(result);
-                    updateCardStatus(file.name, 'success', '处理成功', result.blob);
-                })
-                .catch(error => {
-                    // 失败后，只更新卡片
-                    updateCardStatus(file.name, 'error', error.message, null);
-                });
-        });
+            if (allImageFiles.length === 0) {
+                resultsGrid.innerHTML = '<p>未在您上传的文件或压缩包中找到支持的图片 (PNG, JPG, BMP)。</p>';
+                return; // 提前退出
+            }
 
-        await Promise.allSettled(promises);
+            // 2. 为所有即将处理的图片创建加载中的卡片
+            allImageFiles.forEach(file => createResultCard(file.name));
 
-        uploadButton.disabled = false;
-        if (processedFiles.length > 0) {
-            downloadButton.disabled = false;
+            // 3. 并行处理所有找到的图片文件
+            const processingPromises = allImageFiles.map(file => {
+                return processImageFile(file)
+                    .then(result => {
+                        processedFiles.push(result);
+                        // 使用 file.name 来确保我们能更新正确的卡片
+                        updateCardStatus(file.name, 'success', '处理成功', result.blob);
+                    })
+                    .catch(error => {
+                        updateCardStatus(file.name, 'error', error.message, null);
+                    });
+            });
+
+            // 等待所有处理任务完成
+            await Promise.allSettled(processingPromises);
+
+        } catch (error) {
+            console.error("处理上传文件时发生严重错误:", error);
+            resultsGrid.innerHTML = `<p class="status error">处理失败: ${error.message}</p>`;
+        } finally {
+            // 4. 无论成功与否，最后都恢复按钮状态
+            uploadButton.disabled = false;
+            if (processedFiles.length > 0) {
+                downloadButton.disabled = false;
+            }
+            fileInput.value = ''; // 清空文件选择器，以便用户可以再次上传相同的文件
         }
-        fileInput.value = '';
     }
 
     function createResultCard(fileName) {
