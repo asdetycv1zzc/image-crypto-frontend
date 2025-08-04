@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>图片加密/解密工具</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- 从 CDN 引入 JSZip 库 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+</head>
+<body>
+
+    <div class="container">
+        <header>
+            <h1>图片批量加密/解密</h1>
+            <p>上传 JPG, PNG, BMP 等格式图片进行加密。再次上传已加密的 PNG 图片可进行解密。</p>
+        </header>
+
+        <div class="controls">
+            <!-- 这个隐藏的 input 才是真正的文件选择器 -->
+            <input type="file" id="fileInput" multiple accept="image/*" style="display: none;">
+            
+            <!-- 这是用户看到的按钮 -->
+            <button id="uploadButton">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                <span>选择并处理图片</span>
+            </button>
+            
+            <button id="downloadButton" disabled>
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                <span>下载全部 (.zip)</span>
+            </button>
+        </div>
+
+        <!-- 用于显示处理日志和结果的区域 -->
+        <div id="results" class="results-grid">
+            <!-- 结果卡片将动态添加到这里 -->
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
