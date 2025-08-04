@@ -179,45 +179,40 @@ if ('serviceWorker' in navigator) {
 
     /**
      * 将一个块从源数据复制到目标数据，能安全处理边缘不完整的块。
-     * @param {Uint8Array} src - 源像素数据.
+     * @param {Uint8Array} src - 源像素数据 (完整缓冲区).
      * @param {number} srcWidth - 源图像的完整宽度.
-     * @param {number} srcHeight - 源图像的完整高度.
-     * @param {Uint8Array} dest - 目标像素数据.
+     * @param {number} srcHeight - 源图像内容区域的高度.
+     * @param {number} srcStartRow - 源内容在缓冲区中的起始行.
+     * @param {Uint8Array} dest - 目标像素数据 (完整缓冲区).
      * @param {number} destWidth - 目标图像的完整宽度.
-     * @param {number} destBlockX - 目标位置块的 X 坐标 (以块为单位).
-     * @param {number} destBlockY - 目标位置块的 Y 坐标 (以块为单位).
+     * @param {number} destStartRow - 目标内容在缓冲区中的起始行.
+     * @param {number} destBlockX - 目标位置块的 X 坐标.
+     * @param {number} destBlockY - 目标位置块的 Y 坐标.
      * @param {number} srcBlockX - 源位置块的 X 坐标.
      * @param {number} srcBlockY - 源位置块的 Y 坐标.
      */
-    function copyBlock(src, srcWidth, srcHeight, dest, destWidth, destBlockX, destBlockY, srcBlockX, srcBlockY) {
-        // 计算源块和目标块的左上角像素坐标
+    function copyBlock(src, srcWidth, srcHeight, srcStartRow, dest, destWidth, destStartRow, destBlockX, destBlockY, srcBlockX, srcBlockY) {
         const srcStartX = srcBlockX * BLOCK_SIZE;
         const srcStartY = srcBlockY * BLOCK_SIZE;
         const destStartX = destBlockX * BLOCK_SIZE;
         const destStartY = destBlockY * BLOCK_SIZE;
 
-        // --- 核心改动：计算块的实际有效尺寸 ---
-        // 如果块在右边缘，其宽度可能小于 BLOCK_SIZE
+        // 计算块的实际有效尺寸
         const effectiveBlockWidth = Math.min(BLOCK_SIZE, srcWidth - srcStartX);
-        // 如果块在下边缘，其高度可能小于 BLOCK_SIZE
         const effectiveBlockHeight = Math.min(BLOCK_SIZE, srcHeight - srcStartY);
 
-        // 逐行复制块内的数据
         for (let y = 0; y < effectiveBlockHeight; y++) {
-            const srcRow = srcStartY + y;
-            const destRow = destStartY + y;
+            // 在各自的缓冲区内计算真实的行号（加上起始行偏移）
+            const srcFinalRow = srcStartY + y + srcStartRow;
+            const destFinalRow = destStartY + y + destStartRow;
 
-            // 计算当前行在源和目标缓冲区中的起始偏移量
-            const srcOffset = (srcRow * srcWidth + srcStartX) * CHANNELS;
-            const destOffset = (destRow * destWidth + destStartX) * CHANNELS;
+            // 计算在完整缓冲区中的偏移量
+            const srcOffset = (srcFinalRow * srcWidth + srcStartX) * CHANNELS;
+            const destOffset = (destFinalRow * destWidth + destStartX) * CHANNELS;
 
-            // 计算需要复制的字节数（只复制有效宽度）
             const bytesToCopy = effectiveBlockWidth * CHANNELS;
 
-            // 从源数据提取一行像素
             const rowData = src.subarray(srcOffset, srcOffset + bytesToCopy);
-
-            // 将这行像素设置到目标缓冲区
             dest.set(rowData, destOffset);
         }
     }
@@ -230,24 +225,28 @@ if ('serviceWorker' in navigator) {
         const blocksY = Math.ceil(height / BLOCK_SIZE);
         const totalBlocks = blocksX * blocksY;
 
-        // 1. 创建并打乱 shuffle map
         const shuffleMap = Array.from({length: totalBlocks}, (_, i) => i);
         shuffleArray(shuffleMap);
+
         const mapPixels = totalBlocks;
         const mapRows = Math.ceil(mapPixels / width);
+
         const newHeight = mapRows + height + 2;
         const outputPixels = new Uint8Array(width * newHeight * CHANNELS);
+
         for (let i = 0; i < totalBlocks; i++) {
             encodeNumberToPixel(shuffleMap[i], outputPixels, i * CHANNELS);
         }
+
         const keyRow = new Uint8Array(width * CHANNELS);
         crypto.getRandomValues(keyRow);
         outputPixels.set(keyRow, mapRows * width * CHANNELS);
 
-        // 6. 根据 Shuffle Map 复制图像块
-        const imageContentOffsetRows = mapRows + 1;
-        const encryptedImagePortion = outputPixels.subarray(imageContentOffsetRows * width * CHANNELS);
+        // --- 核心改动 ---
+        // 定义图像内容的起始行
+        const imageContentStartRow = mapRows + 1;
 
+        // 根据 Shuffle Map 复制图像块
         for (let i = 0; i < totalBlocks; i++) {
             const originalBlockIndex = shuffleMap[i];
 
@@ -257,12 +256,16 @@ if ('serviceWorker' in navigator) {
             const destBlockX = i % blocksX;
             const destBlockY = Math.floor(i / blocksX);
 
-            // --- 改动在这里 ---
             // 调用新的 copyBlock 函数
-            copyBlock(pixels, width, height, encryptedImagePortion, width, destBlockX, destBlockY, srcBlockX, srcBlockY);
+            // 源: pixels, 从第 0 行开始
+            // 目标: outputPixels, 从 imageContentStartRow 行开始
+            copyBlock(
+                pixels, width, height, 0,
+                outputPixels, width, imageContentStartRow,
+                destBlockX, destBlockY, srcBlockX, srcBlockY
+            );
         }
 
-        // 7. 在末尾添加 Magic Row
         const magicRow = generateMagicRow(width);
         outputPixels.set(magicRow, (newHeight - 1) * width * CHANNELS);
 
@@ -273,24 +276,34 @@ if ('serviceWorker' in navigator) {
     async function decryptWithShuffle(pixels, width, height) {
         console.log("执行 Index-Shuffle 解密流程...");
 
+        const originalBlocksX = Math.ceil(width / BLOCK_SIZE);
+        // 注意：这里需要根据原始高度计算 Y 方向的块数
+        // 我们先计算出原始高度
+        const tempTotalBlocks = originalBlocksX * Math.ceil((height - 2) / BLOCK_SIZE);
+        const tempMapRows = Math.ceil(tempTotalBlocks / width);
+        const originalHeight = height - tempMapRows - 2;
+
+        if (originalHeight <= 0) throw new Error("无效的加密文件，高度不足。");
+
         const blocksX = Math.ceil(width / BLOCK_SIZE);
-        const blocksY = Math.ceil(height / BLOCK_SIZE);
+        const blocksY = Math.ceil(originalHeight / BLOCK_SIZE);
         const totalBlocks = blocksX * blocksY;
+
         const mapPixels = totalBlocks;
         const mapRows = Math.ceil(mapPixels / width);
+
         const shuffleMap = new Array(totalBlocks);
         for (let i = 0; i < totalBlocks; i++) {
             shuffleMap[i] = decodeNumberFromPixel(pixels, i * CHANNELS);
         }
 
-        // 3. 确定原始图像的高度和加密内容
-        const originalHeight = height - mapRows - 2;
-        if (originalHeight <= 0) throw new Error("无效的加密文件，高度不足。");
-
-        const encryptedContent = pixels.subarray((mapRows + 1) * width * CHANNELS, (height - 1) * width * CHANNELS);
         const decryptedPixels = new Uint8Array(width * originalHeight * CHANNELS);
 
-        // 4. 根据 Shuffle Map 恢复图像块
+        // --- 核心改动 ---
+        // 加密内容在输入图像中的起始行
+        const encryptedContentStartRow = mapRows + 1;
+
+        // 根据 Shuffle Map 恢复图像块
         for (let i = 0; i < totalBlocks; i++) {
             const originalBlockIndex = shuffleMap[i];
 
@@ -300,9 +313,14 @@ if ('serviceWorker' in navigator) {
             const srcBlockX = i % blocksX;
             const srcBlockY = Math.floor(i / blocksX);
 
-            // --- 改动在这里 ---
             // 调用新的 copyBlock 函数
-            copyBlock(encryptedContent, width, originalHeight, decryptedPixels, width, destBlockX, destBlockY, srcBlockX, srcBlockY);
+            // 源: pixels, 从 encryptedContentStartRow 行开始
+            // 目标: decryptedPixels, 从第 0 行开始
+            copyBlock(
+                pixels, width, originalHeight, encryptedContentStartRow,
+                decryptedPixels, width, 0,
+                destBlockX, destBlockY, srcBlockX, srcBlockY
+            );
         }
 
         console.log("Shuffle 解密完成。");
