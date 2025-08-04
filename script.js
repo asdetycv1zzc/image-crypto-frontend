@@ -258,6 +258,4 @@
         document.body.removeChild(link);
         URL.revokeObjectURL(link.href);
     }
-
-})();
 })();
