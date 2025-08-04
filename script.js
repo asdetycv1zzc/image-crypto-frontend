@@ -2872,11 +2872,6 @@ BmpDecoder.prototype.bit32 = function() {
 BmpDecoder.prototype.getData = function() {
   return this.data;
 };
-
-module.exports = function(bmpData) {
-  var decoder = new BmpDecoder(bmpData);
-  return decoder;
-};
     return { decode: decode };
 })();
 
@@ -3147,3 +3142,4 @@ module.exports = function(bmpData) {
     }
 
 })();
+
