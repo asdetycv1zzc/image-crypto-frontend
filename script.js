@@ -54,7 +54,7 @@
         const expectedMagicRow = generateMagicRow(width);
         const lastRowOffset = (height - 1) * width * CHANNELS;
         const lastRow = pixelData.subarray(lastRowOffset, lastRowOffset + width * CHANNELS);
-        return areBuffersEqual(lastRow.buffer, expectedMagicRow.buffer);
+        return areBuffersEqual(lastRow, expectedMagicRow);
     }
 
     function decodeImage(buffer) {
@@ -359,6 +359,7 @@ async function processImageFile(file) {
         }, processedFiles.length * 300 + 500);
     }
 })();
+
 
 
 
