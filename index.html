@@ -38,14 +38,14 @@
     </div>
 
     <!-- 1. 按顺序加载所有依赖库 -->
-    <!-- JSZip for creating zip files -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-    
-    <!-- Pako for Zlib (dependency for UPNG.js) -->
-    <script src="pako.min.js"></script> <!-- Recommended: Link to local file -->
+    <script src="pako.min.js"></script>
+    <script src="UPNG.js"></script>
+    <script src="jpeg-decoder.js"></script>
+    <script src="bmp-decoder.js"></script>
 
-
-    <!-- 2. 加载我们的主处理逻辑 -->
+    <!-- 2. 最后加载我们的主逻辑脚本 -->
     <script src="script.js"></script>
 </body>
 </html>
+
