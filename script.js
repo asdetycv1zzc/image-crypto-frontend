@@ -70,80 +70,89 @@
     }
 
     // 图片处理的主函数
-    async function processImageFile(file) {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = async (event) => {
-                try {
-                    const buffer = event.target.result;
-                    const { width, height, data: pixels } = decodeImage(buffer);
-                    
-                    if (!width || !height || !pixels) {
-                        throw new Error("解码失败，无法获取图片数据。");
-                    }
+    // 在您的 script.js 中，找到并替换这个函数
 
-                    let outputPngBuffer;
-                    const isAlreadyEncrypted = isEncrypted(pixels, width, height);
-
-                    if (isAlreadyEncrypted) {
-                        // --- 解密流程 ---
-                        const originalHeight = height - 2;
-                        if (originalHeight <= 0) throw new Error("无效的加密文件，高度不足。");
-
-                        const keyRow = pixels.subarray(0, width * CHANNELS);
-                        const encryptedData = pixels.subarray(width * CHANNELS, (height - 1) * width * CHANNELS);
-                        const decryptedData = new Uint8Array(width * originalHeight * CHANNELS);
-
-                        for (let i = 0; i < originalHeight; i++) {
-                            for (let j = 0; j < width; j++) {
-                                const keyPixelIndex = ((i * width + j) % width);
-                                const keyOffset = keyPixelIndex * CHANNELS;
-                                const sourceOffset = (i * width + j) * CHANNELS;
-                                for (let c = 0; c < CHANNELS; c++) {
-                                    decryptedData[sourceOffset + c] = encryptedData[sourceOffset + c] ^ keyRow[keyOffset + c];
-                                }
-                            }
-                        }
-                        outputPngBuffer = UPNG.encode([decryptedData.buffer], width, originalHeight, 0);
-                    } else {
-                        // --- 加密流程 ---
-                        const newHeight = height + 2;
-                        const encryptedData = new Uint8Array(width * newHeight * CHANNELS);
-                        
-                        const keyRow = new Uint8Array(width * CHANNELS);
-                        crypto.getRandomValues(keyRow);
-                        encryptedData.set(keyRow, 0);
-
-                        for (let i = 0; i < height; i++) {
-                            for (let j = 0; j < width; j++) {
-                                const keyPixelIndex = ((i * width + j) % width);
-                                const keyOffset = keyPixelIndex * CHANNELS;
-                                const sourceOffset = (i * width + j) * CHANNELS;
-                                const destOffset = ((i + 1) * width + j) * CHANNELS;
-                                for (let c = 0; c < CHANNELS; c++) {
-                                    encryptedData[destOffset + c] = pixels[sourceOffset + c] ^ keyRow[keyOffset + c];
-                                }
-                            }
-                        }
-
-                        const magicRow = generateMagicRow(width);
-                        encryptedData.set(magicRow, (newHeight - 1) * width * CHANNELS);
-                        outputPngBuffer = UPNG.encode([encryptedData.buffer], width, newHeight, 0);
-                    }
-                    
-                    const imageBlob = new Blob([outputPngBuffer], { type: 'image/png' });
-                    const newFileName = isAlreadyEncrypted ? `decrypted-${file.name}` : `encrypted-${file.name.split('.').slice(0, -1).join('.') || file.name}.png`;
-                    
-                    resolve({ name: newFileName, blob: imageBlob });
-                } catch (error) {
-                    console.error("处理图片时发生错误:", error);
-                    reject(error);
+async function processImageFile(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+            try {
+                const buffer = event.target.result;
+                const { width, height, data: pixels } = decodeImage(buffer);
+                
+                if (!width || !height || !pixels || pixels.length === 0) {
+                    throw new Error("解码失败，无法获取图片数据。");
                 }
-            };
-            reader.onerror = (error) => reject(error);
-            reader.readAsArrayBuffer(file);
-        });
-    }
+
+                let outputPngBuffer;
+                const isAlreadyEncrypted = isEncrypted(pixels, width, height);
+
+                if (isAlreadyEncrypted) {
+                    // --- 解密流程 ---
+                    const originalHeight = height - 2;
+                    if (originalHeight <= 0) throw new Error("无效的加密文件，高度不足。");
+
+                    const keyRow = pixels.subarray(0, width * CHANNELS);
+                    const encryptedData = pixels.subarray(width * CHANNELS, (height - 1) * width * CHANNELS);
+                    const decryptedData = new Uint8Array(width * originalHeight * CHANNELS);
+                    
+                    // [算法恢复] 使用 i * j % width
+                    for (let i = 0; i < originalHeight; i++) {
+                        for (let j = 0; j < width; j++) {
+                            const keyPixelIndex = (i * j) % width; // 恢复为原始算法
+
+                            const sourceOffset = (i * width + j) * CHANNELS;
+                            const keyOffset = keyPixelIndex * CHANNELS;
+
+                            for (let c = 0; c < CHANNELS; c++) {
+                                decryptedData[sourceOffset + c] = encryptedData[sourceOffset + c] ^ keyRow[keyOffset + c];
+                            }
+                        }
+                    }
+                    outputPngBuffer = UPNG.encode([decryptedData.buffer], width, originalHeight, 0);
+                } else {
+                    // --- 加密流程 ---
+                    const newHeight = height + 2;
+                    const encryptedData = new Uint8Array(width * newHeight * CHANNELS);
+                    
+                    const keyRow = new Uint8Array(width * CHANNELS);
+                    crypto.getRandomValues(keyRow);
+                    encryptedData.set(keyRow, 0);
+
+                    // [算法恢复] 使用 i * j % width
+                    for (let i = 0; i < height; i++) {
+                        for (let j = 0; j < width; j++) {
+                            const keyPixelIndex = (i * j) % width; // 恢复为原始算法
+
+                            const sourceOffset = (i * width + j) * CHANNELS;
+                            const destOffset = ((i + 1) * width + j) * CHANNELS;
+                            const keyOffset = keyPixelIndex * CHANNELS;
+                            
+                            for (let c = 0; c < CHANNELS; c++) {
+                                encryptedData[destOffset + c] = pixels[sourceOffset + c] ^ keyRow[keyOffset + c];
+                            }
+                        }
+                    }
+
+                    const magicRow = generateMagicRow(width);
+                    encryptedData.set(magicRow, (newHeight - 1) * width * CHANNELS);
+                    outputPngBuffer = UPNG.encode([encryptedData.buffer], width, newHeight, 0);
+                }
+                
+                const imageBlob = new Blob([outputPngBuffer], { type: 'image/png' });
+                // 文件名逻辑保持不变
+                const newFileName = isAlreadyEncrypted ? `decrypted-${file.name.replace(/\.png$/i, '')}` : `encrypted-${file.name.split('.').slice(0, -1).join('.') || file.name}.png`;
+                
+                resolve({ name: newFileName, blob: imageBlob });
+            } catch (error) {
+                console.error("处理图片时发生错误:", error);
+                reject(error);
+            }
+        };
+        reader.onerror = (error) => reject(error);
+        reader.readAsArrayBuffer(file);
+    });
+}
 
     // --- 前端交互逻辑 ---
     const fileInput = document.getElementById('fileInput');
@@ -259,3 +268,4 @@
         URL.revokeObjectURL(link.href);
     }
 })();
+
