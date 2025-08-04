@@ -136,6 +136,179 @@ if ('serviceWorker' in navigator) {
     // 图片处理的主函数
     // 在您的 script.js 中，找到并替换这个函数
 
+    const BLOCK_SIZE = 16; // 定义块大小为 16x16 像素，可以调整
+    const MAP_PIXEL_CHANNELS = 4; // 用一个 RGBA 像素来存一个 32 位整数的 map index
+
+    /**
+     * 将一个 32 位整数（块索引）编码到一个 RGBA 像素中。
+     * @param {number} num - 要编码的数字.
+     * @param {Uint8Array} pixelData - 目标像素数据 (长度为 4).
+     * @param {number} offset - 在像素数据中的偏移量.
+     */
+    function encodeNumberToPixel(num, pixelData, offset) {
+        pixelData[offset] = (num >> 24) & 0xFF; // Red
+        pixelData[offset + 1] = (num >> 16) & 0xFF; // Green
+        pixelData[offset + 2] = (num >> 8) & 0xFF; // Blue
+        pixelData[offset + 3] = num & 0xFF;         // Alpha
+    }
+
+    /**
+     * 从一个 RGBA 像素中解码出 32 位整数。
+     * @param {Uint8Array} pixelData - 包含像素数据的数组.
+     * @param {number} offset - 像素的起始偏移量.
+     * @returns {number} 解码后的数字.
+     */
+    function decodeNumberFromPixel(pixelData, offset) {
+        const r = pixelData[offset];
+        const g = pixelData[offset + 1];
+        const b = pixelData[offset + 2];
+        const a = pixelData[offset + 3];
+        return (r << 24) | (g << 16) | (b << 8) | a;
+    }
+
+    /**
+     * Fisher-Yates (aka Knuth) Shuffle 算法，用于随机打乱数组。
+     * @param {Array} array - 需要打乱的数组.
+     */
+    function shuffleArray(array) {
+        for (let i = array.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [array[i], array[j]] = [array[j], array[i]];
+        }
+    }
+
+    /**
+     * 将一个块从源数据复制到目标数据，能安全处理边缘不完整的块。
+     * @param {Uint8Array} src - 源像素数据.
+     * @param {number} srcWidth - 源图像的完整宽度.
+     * @param {number} srcHeight - 源图像的完整高度.
+     * @param {Uint8Array} dest - 目标像素数据.
+     * @param {number} destWidth - 目标图像的完整宽度.
+     * @param {number} destBlockX - 目标位置块的 X 坐标 (以块为单位).
+     * @param {number} destBlockY - 目标位置块的 Y 坐标 (以块为单位).
+     * @param {number} srcBlockX - 源位置块的 X 坐标.
+     * @param {number} srcBlockY - 源位置块的 Y 坐标.
+     */
+    function copyBlock(src, srcWidth, srcHeight, dest, destWidth, destBlockX, destBlockY, srcBlockX, srcBlockY) {
+        // 计算源块和目标块的左上角像素坐标
+        const srcStartX = srcBlockX * BLOCK_SIZE;
+        const srcStartY = srcBlockY * BLOCK_SIZE;
+        const destStartX = destBlockX * BLOCK_SIZE;
+        const destStartY = destBlockY * BLOCK_SIZE;
+
+        // --- 核心改动：计算块的实际有效尺寸 ---
+        // 如果块在右边缘，其宽度可能小于 BLOCK_SIZE
+        const effectiveBlockWidth = Math.min(BLOCK_SIZE, srcWidth - srcStartX);
+        // 如果块在下边缘，其高度可能小于 BLOCK_SIZE
+        const effectiveBlockHeight = Math.min(BLOCK_SIZE, srcHeight - srcStartY);
+
+        // 逐行复制块内的数据
+        for (let y = 0; y < effectiveBlockHeight; y++) {
+            const srcRow = srcStartY + y;
+            const destRow = destStartY + y;
+
+            // 计算当前行在源和目标缓冲区中的起始偏移量
+            const srcOffset = (srcRow * srcWidth + srcStartX) * CHANNELS;
+            const destOffset = (destRow * destWidth + destStartX) * CHANNELS;
+
+            // 计算需要复制的字节数（只复制有效宽度）
+            const bytesToCopy = effectiveBlockWidth * CHANNELS;
+
+            // 从源数据提取一行像素
+            const rowData = src.subarray(srcOffset, srcOffset + bytesToCopy);
+
+            // 将这行像素设置到目标缓冲区
+            dest.set(rowData, destOffset);
+        }
+    }
+
+
+    async function encryptWithShuffle(pixels, width, height) {
+        console.log("执行 Index-Shuffle 加密流程...");
+
+        const blocksX = Math.ceil(width / BLOCK_SIZE);
+        const blocksY = Math.ceil(height / BLOCK_SIZE);
+        const totalBlocks = blocksX * blocksY;
+
+        // 1. 创建并打乱 shuffle map
+        const shuffleMap = Array.from({length: totalBlocks}, (_, i) => i);
+        shuffleArray(shuffleMap);
+        const mapPixels = totalBlocks;
+        const mapRows = Math.ceil(mapPixels / width);
+        const newHeight = mapRows + height + 2;
+        const outputPixels = new Uint8Array(width * newHeight * CHANNELS);
+        for (let i = 0; i < totalBlocks; i++) {
+            encodeNumberToPixel(shuffleMap[i], outputPixels, i * CHANNELS);
+        }
+        const keyRow = new Uint8Array(width * CHANNELS);
+        crypto.getRandomValues(keyRow);
+        outputPixels.set(keyRow, mapRows * width * CHANNELS);
+
+        // 6. 根据 Shuffle Map 复制图像块
+        const imageContentOffsetRows = mapRows + 1;
+        const encryptedImagePortion = outputPixels.subarray(imageContentOffsetRows * width * CHANNELS);
+
+        for (let i = 0; i < totalBlocks; i++) {
+            const originalBlockIndex = shuffleMap[i];
+
+            const srcBlockX = originalBlockIndex % blocksX;
+            const srcBlockY = Math.floor(originalBlockIndex / blocksX);
+
+            const destBlockX = i % blocksX;
+            const destBlockY = Math.floor(i / blocksX);
+
+            // --- 改动在这里 ---
+            // 调用新的 copyBlock 函数
+            copyBlock(pixels, width, height, encryptedImagePortion, width, destBlockX, destBlockY, srcBlockX, srcBlockY);
+        }
+
+        // 7. 在末尾添加 Magic Row
+        const magicRow = generateMagicRow(width);
+        outputPixels.set(magicRow, (newHeight - 1) * width * CHANNELS);
+
+        console.log("Shuffle 加密完成。");
+        return UPNG.encode([outputPixels.buffer], width, newHeight, 0);
+    }
+
+    async function decryptWithShuffle(pixels, width, height) {
+        console.log("执行 Index-Shuffle 解密流程...");
+
+        const blocksX = Math.ceil(width / BLOCK_SIZE);
+        const blocksY = Math.ceil(height / BLOCK_SIZE);
+        const totalBlocks = blocksX * blocksY;
+        const mapPixels = totalBlocks;
+        const mapRows = Math.ceil(mapPixels / width);
+        const shuffleMap = new Array(totalBlocks);
+        for (let i = 0; i < totalBlocks; i++) {
+            shuffleMap[i] = decodeNumberFromPixel(pixels, i * CHANNELS);
+        }
+
+        // 3. 确定原始图像的高度和加密内容
+        const originalHeight = height - mapRows - 2;
+        if (originalHeight <= 0) throw new Error("无效的加密文件，高度不足。");
+
+        const encryptedContent = pixels.subarray((mapRows + 1) * width * CHANNELS, (height - 1) * width * CHANNELS);
+        const decryptedPixels = new Uint8Array(width * originalHeight * CHANNELS);
+
+        // 4. 根据 Shuffle Map 恢复图像块
+        for (let i = 0; i < totalBlocks; i++) {
+            const originalBlockIndex = shuffleMap[i];
+
+            const destBlockX = originalBlockIndex % blocksX;
+            const destBlockY = Math.floor(originalBlockIndex / blocksX);
+
+            const srcBlockX = i % blocksX;
+            const srcBlockY = Math.floor(i / blocksX);
+
+            // --- 改动在这里 ---
+            // 调用新的 copyBlock 函数
+            copyBlock(encryptedContent, width, originalHeight, decryptedPixels, width, destBlockX, destBlockY, srcBlockX, srcBlockY);
+        }
+
+        console.log("Shuffle 解密完成。");
+        return UPNG.encode([decryptedPixels.buffer], width, originalHeight, 0);
+    }
+
     async function processImageFile(file) {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
@@ -149,90 +322,33 @@ if ('serviceWorker' in navigator) {
                         throw new Error("解码失败，无法获取图片数据。");
                     }
 
-                    // [调试] 打印出解码后的图片信息
                     console.log(`解码后尺寸: ${width}x${height}`);
 
-                    // [调试] 执行 isEncrypted 判断并打印结果
                     const isAlreadyEncrypted = isEncrypted(pixels, width, height);
                     console.log(`isEncrypted 函数返回: ${isAlreadyEncrypted}`);
-
-                    // [调试] 如果是加密文件，我们打印出 magic row 的对比
-                    if (height >= 2) {
-                        const expectedMagicRow = generateMagicRow(width);
-                        const lastRowOffset = (height - 1) * width * CHANNELS;
-                        const lastRow = pixels.subarray(lastRowOffset, lastRowOffset + width * CHANNELS);
-                        console.log("期望的 Magic Row (前16字节):", expectedMagicRow.slice(0, 16));
-                        console.log("实际的 Last Row (前16字节):", lastRow.slice(0, 16));
-                        // 检查两个 buffer 是否真的不相等
-                        if (!areBuffersEqual(lastRow, expectedMagicRow)) {
-                            console.warn("警告: Magic Row 对比失败！");
-                        }
-                    }
-
 
                     let outputPngBuffer;
 
                     if (isAlreadyEncrypted) {
-                        console.log("执行解密流程...");
-                        // --- 解密流程 ---
-                        const originalHeight = height - 2;
-                        if (originalHeight <= 0) throw new Error("无效的加密文件，高度不足。");
-
-                        const keyRow = pixels.subarray(0, width * CHANNELS);
-                        const encryptedData = pixels.subarray(width * CHANNELS, (height - 1) * width * CHANNELS);
-                        const decryptedData = new Uint8Array(width * originalHeight * CHANNELS);
-
-                        for (let i = 0; i < originalHeight; i++) {
-                            for (let j = 0; j < width; j++) {
-                                const keyPixelIndex = (i * j) % width;
-                                const sourceOffset = (i * width + j) * CHANNELS;
-                                const keyOffset = keyPixelIndex * CHANNELS;
-                                for (let c = 0; c < CHANNELS; c++) {
-                                    decryptedData[sourceOffset + c] = encryptedData[sourceOffset + c] ^ keyRow[keyOffset + c];
-                                }
-                            }
-                        }
-                        outputPngBuffer = UPNG.encode([decryptedData.buffer], width, originalHeight, 0);
-                        console.log("解密完成。");
+                        // 如果检测到 magic row，使用新的 shuffle 解密器
+                        outputPngBuffer = await decryptWithShuffle(pixels, width, height);
                     } else {
-                        console.log("执行加密流程...");
-                        // --- 加密流程 ---
-                        const newHeight = height + 2;
-                        const encryptedData = new Uint8Array(width * newHeight * CHANNELS);
-
-                        const keyRow = new Uint8Array(width * CHANNELS);
-                        crypto.getRandomValues(keyRow);
-                        encryptedData.set(keyRow, 0);
-
-                        for (let i = 0; i < height; i++) {
-                            for (let j = 0; j < width; j++) {
-                                const keyPixelIndex = (i * j) % width;
-                                const sourceOffset = (i * width + j) * CHANNELS;
-                                const destOffset = ((i + 1) * width + j) * CHANNELS;
-                                const keyOffset = keyPixelIndex * CHANNELS;
-                                for (let c = 0; c < CHANNELS; c++) {
-                                    encryptedData[destOffset + c] = pixels[sourceOffset + c] ^ keyRow[keyOffset + c];
-                                }
-                            }
-                        }
-
-                        const magicRow = generateMagicRow(width);
-                        encryptedData.set(magicRow, (newHeight - 1) * width * CHANNELS);
-                        console.log("加密时写入的 Magic Row (前16字节):", magicRow.slice(0, 16));
-                        outputPngBuffer = UPNG.encode([encryptedData.buffer], width, newHeight, 0);
-                        console.log("加密完成。");
+                        // 否则，使用新的 shuffle 加密器
+                        outputPngBuffer = await encryptWithShuffle(pixels, width, height);
                     }
 
                     const imageBlob = new Blob([outputPngBuffer], {type: 'image/png'});
-                    const newFileName = isAlreadyEncrypted ? `decrypted-${file.name.replace(/\.png$/i, '')}` : `encrypted-${file.name.split('.').slice(0, -1).join('.') || file.name}.png`;
+                    const newFileName = isAlreadyEncrypted ? `decrypted-shuffled-${file.name.replace(/\.png$/i, '')}` : `encrypted-shuffled-${file.name.split('.').slice(0, -1).join('.') || file.name}.png`;
 
                     resolve({name: newFileName, blob: imageBlob});
                 } catch (error) {
                     console.error("处理图片时发生错误:", error);
-                    reject(error);
+                    // 提供更具体的错误信息给卡片
+                    const errorMessage = error.message || "未知错误";
+                    reject(new Error(`处理失败: ${errorMessage}`));
                 }
             };
-            reader.onerror = (error) => reject(error);
+            reader.onerror = (error) => reject(new Error("文件读取失败。"));
             reader.readAsArrayBuffer(file);
         });
     }
