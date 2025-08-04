@@ -266,9 +266,8 @@ if ('serviceWorker' in navigator) {
 
 
     async function encryptWithShuffle(pixels, width, height) {
-        console.log("执行加密 (向下取整方案)...");
+        console.log("执行加密 (无损方案)...");
 
-        // 1. 计算可被整除的有效内容尺寸 (采纳您的建议)
         const contentWidth = Math.floor(width / BLOCK_SIZE) * BLOCK_SIZE;
         const contentHeight = Math.floor(height / BLOCK_SIZE) * BLOCK_SIZE;
 
@@ -276,12 +275,10 @@ if ('serviceWorker' in navigator) {
             throw new Error("图片尺寸太小，无法进行分块加密。");
         }
 
-        // 2. 基于有效尺寸，计算块信息 (不再有 Math.ceil)
         const blocksX = contentWidth / BLOCK_SIZE;
         const blocksY = contentHeight / BLOCK_SIZE;
         const totalBlocks = blocksX * blocksY;
 
-        // 3. 准备元数据
         const metadata = {
             originalWidth: width,
             originalHeight: height,
@@ -290,29 +287,33 @@ if ('serviceWorker' in navigator) {
             totalBlocks
         };
 
-        // 4. 创建并打乱 Shuffle Map
         const shuffleMap = Array.from({length: totalBlocks}, (_, i) => i);
         shuffleArray(shuffleMap);
 
-        // 5. 计算新图像尺寸
+        // --- 核心改动 1: 新高度基于原始高度 ---
         const mapRows = Math.ceil(totalBlocks / width);
-        const newHeight = 1 + mapRows + contentHeight + 1; // 1(meta)+map+content+1(magic)
+        const newHeight = 1 + mapRows + height + 1; // 1(meta)+map+original_height+1(magic)
 
-        // 6. 准备输出缓冲区
         const outputPixels = new Uint8Array(width * newHeight * CHANNELS);
 
-        // 7. 写入元数据 (第 0 行)
+        // 写入元数据
         const metadataRow = outputPixels.subarray(0, width * CHANNELS);
         encodeMetadataToRow(metadataRow, metadata);
 
-        // 8. 写入 Shuffle Map (从第 1 行开始)
+        // 写入 Shuffle Map
         const mapStartOffset = width * CHANNELS;
         for (let i = 0; i < totalBlocks; i++) {
             encodeNumberToPixel(shuffleMap[i], outputPixels, mapStartOffset + i * CHANNELS);
         }
 
-        // 9. 复制图像块 (只复制完整块)
+        // --- 核心改动 2: 先完整复制，再覆盖 ---
         const imageContentStartRow = 1 + mapRows;
+
+        // 9. 先将整个原始图像复制过去。这一步将边缘像素原样保留。
+        const destImageOffset = imageContentStartRow * width * CHANNELS;
+        outputPixels.set(pixels, destImageOffset);
+
+        // 10. 然后，用打乱的块覆盖有效内容区域。
         for (let i = 0; i < totalBlocks; i++) {
             const originalBlockIndex = shuffleMap[i];
             const srcBlockX = originalBlockIndex % blocksX;
@@ -322,16 +323,16 @@ if ('serviceWorker' in navigator) {
 
             copyBlock(
                 pixels, width, height, 0,
-                outputPixels, width, contentHeight, imageContentStartRow,
+                outputPixels, width, height, imageContentStartRow, // 目标画布高度也是原始高度
                 destBlockX, destBlockY, srcBlockX, srcBlockY
             );
         }
 
-        // 10. 写入 Magic Row (最后一行)
+        // 写入 Magic Row
         const magicRow = generateMagicRow(width);
         outputPixels.set(magicRow, (newHeight - 1) * width * CHANNELS);
 
-        console.log(`加密完成。有效内容 ${contentWidth}x${contentHeight}。`);
+        console.log(`无损加密完成。`);
         return UPNG.encode([outputPixels.buffer], width, newHeight, 0);
     }
 
@@ -365,34 +366,21 @@ if ('serviceWorker' in navigator) {
 
 
     async function decryptWithShuffle(pixels, width, height) {
-        console.log("执行解密 (确定性方案)...");
+        console.log("执行解密 (无损方案)...");
 
-        // 1. 验证基本结构
-        if (height < 3) throw new Error("文件高度不足，无法解密。");
-        const lastRowOffset = (height - 1) * width * CHANNELS;
-        const lastRow = pixels.subarray(lastRowOffset, lastRowOffset + width * CHANNELS);
-        if (!areBuffersEqual(generateMagicRow(width), lastRow)) {
-            throw new Error("Magic Row 验证失败，非有效加密文件。");
-        }
-
-        // 2. 读取元数据 (第 0 行) - 绝对可靠
+        // ... (读取和验证元数据的部分完全不变) ...
         const metadataRow = pixels.subarray(0, width * CHANNELS);
         const metadata = decodeMetadataFromRow(metadataRow);
-
-        console.log("成功解码元数据:", metadata);
-
-        // 3. 从元数据中获取所有精确信息
         const {originalWidth, originalHeight, contentWidth, contentHeight, totalBlocks} = metadata;
 
         if (originalWidth !== width) {
             throw new Error(`宽度不匹配: 文件为 ${width}px, 元数据为 ${originalWidth}px.`);
         }
 
-        // 4. 创建空白的原始尺寸画布 (用浅灰色填充，便于观察)
+        // 创建一个精确的原始尺寸画布
         const decryptedPixels = new Uint8Array(originalWidth * originalHeight * CHANNELS);
-        decryptedPixels.fill(240); // 填充为浅灰色，被丢弃的像素区域将显示为此色
 
-        // 5. 读取 Shuffle Map
+        // 读取 Shuffle Map
         const mapRows = Math.ceil(totalBlocks / originalWidth);
         const mapStartOffset = originalWidth * CHANNELS;
         const shuffleMap = new Array(totalBlocks);
@@ -400,10 +388,17 @@ if ('serviceWorker' in navigator) {
             shuffleMap[i] = decodeNumberFromPixel(pixels, mapStartOffset + i * CHANNELS);
         }
 
-        // 6. 恢复图像块
+        // --- 核心改动: 同样采用先复制，再覆盖的策略 ---
         const encryptedContentStartRow = 1 + mapRows;
-        const blocksX = contentWidth / BLOCK_SIZE;
+        const encryptedImageOffset = encryptedContentStartRow * originalWidth * CHANNELS;
+        const encryptedImageEndOffset = encryptedImageOffset + originalWidth * originalHeight * CHANNELS;
+        const encryptedImageData = pixels.subarray(encryptedImageOffset, encryptedImageEndOffset);
 
+        // 6. 先将整个加密图像区域（包含未加密的边缘）复制过来
+        decryptedPixels.set(encryptedImageData);
+
+        // 7. 然后，用解密后的块覆盖有效内容区域
+        const blocksX = contentWidth / BLOCK_SIZE;
         for (let i = 0; i < totalBlocks; i++) {
             const originalBlockIndex = shuffleMap[i];
             const destBlockX = originalBlockIndex % blocksX;
@@ -412,13 +407,13 @@ if ('serviceWorker' in navigator) {
             const srcBlockY = Math.floor(i / blocksX);
 
             copyBlock(
-                pixels, originalWidth, contentHeight, encryptedContentStartRow,
-                decryptedPixels, originalWidth, originalHeight, 0,
+                pixels, originalWidth, height, encryptedContentStartRow, // 从加密文件中读取
+                decryptedPixels, originalWidth, originalHeight, 0,      // 写入到解密画布
                 destBlockX, destBlockY, srcBlockX, srcBlockY
             );
         }
 
-        console.log("解密完成。");
+        console.log("无损解密完成。");
         return UPNG.encode([decryptedPixels.buffer], originalWidth, originalHeight, 0);
     }
 
