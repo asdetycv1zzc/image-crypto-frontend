@@ -3,22 +3,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>图片加密/解密工具</title>
+    <title>本地图片加密/解密工具</title>
     <link rel="stylesheet" href="style.css">
-    <!-- 从 CDN 引入 JSZip 库 -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </head>
 <body>
 
     <div class="container">
         <header>
-            <h1>图片批量加密/解密</h1>
-            <p>上传 JPG, PNG, BMP 等格式图片进行加密。再次上传已加密的 PNG 图片可进行解密。</p>
+            <h1>纯客户端图片加密/解密</h1>
+            <p>您的所有图片都将在您的浏览器本地处理，永远不会上传到任何服务器。</p>
+            <p class="supported-formats">支持格式: PNG, JPG/JPEG, BMP</p>
         </header>
 
         <div class="controls">
             <!-- 这个隐藏的 input 才是真正的文件选择器 -->
-            <input type="file" id="fileInput" multiple accept="image/*" style="display: none;">
+            <input type="file" id="fileInput" multiple accept="image/png, image/jpeg, image/bmp" style="display: none;">
             
             <!-- 这是用户看到的按钮 -->
             <button id="uploadButton">
@@ -38,6 +37,15 @@
         </div>
     </div>
 
+    <!-- 1. 按顺序加载所有依赖库 -->
+    <!-- JSZip for creating zip files -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    
+    <!-- Pako for Zlib (dependency for UPNG.js) -->
+    <script src="pako.min.js"></script> <!-- Recommended: Link to local file -->
+
+
+    <!-- 2. 加载我们的主处理逻辑 -->
     <script src="script.js"></script>
 </body>
 </html>
