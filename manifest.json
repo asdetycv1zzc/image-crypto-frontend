@@ -1,0 +1,21 @@
+{
+  "name": "纯客户端图片加密/解密工具",
+  "short_name": "图片加密",
+  "description": "一个在浏览器本地对图片进行加密和解密的工具，支持离线使用。",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f8f9fa",
+  "theme_color": "#007bff",
+  "icons": [
+    {
+      "src": "icons/icon-192x192.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "icons/icon-512x512.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ]
+}
