@@ -199,7 +199,22 @@ async function processImageFile(file) {
             handleFileUpload(Array.from(files));
         }
     });
-    downloadButton.addEventListener('click', downloadAllAsZip);
+    downloadButton.addEventListener('click', handleDownload);
+    function isMobileDevice() {
+        // 一个简单但相当有效的正则表达式来检测移动设备
+        return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    }
+    // [新增] 用于下载单个文件的辅助函数
+    function downloadFile(blob, fileName) {
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        // 短暂延迟后释放 URL 对象，确保下载有时间开始
+        setTimeout(() => URL.revokeObjectURL(link.href), 100);
+    }
 
     async function handleFileUpload(files) {
         resultsGrid.innerHTML = '';
@@ -298,7 +313,53 @@ async function processImageFile(file) {
         document.body.removeChild(link);
         URL.revokeObjectURL(link.href);
     }
+     // [新函数] 智能下载处理器
+    async function handleDownload() {
+        if (processedFiles.length === 0) return;
+        
+        // 禁用按钮防止重复点击
+        downloadButton.disabled = true;
+        
+        if (isMobileDevice()) {
+            // --- 手机端：打包为 ZIP 下载 ---
+            console.log("检测到移动设备，打包为 ZIP 下载。");
+            const zip = new JSZip();
+            
+            processedFiles.forEach(file => {
+                zip.file(file.name, file.blob);
+            });
+
+            try {
+                const zipBlob = await zip.generateAsync({
+                    type: "blob",
+                    compression: "DEFLATE",
+                    compressionOptions: { level: 9 }
+                });
+                downloadFile(zipBlob, `processed-images-${Date.now()}.zip`);
+            } catch (error) {
+                console.error("ZIP 文件生成失败:", error);
+                alert("打包下载失败！");
+            }
+
+        } else {
+            // --- 电脑端：多文件分别下载 ---
+            console.log("检测到桌面设备，将分别下载多个文件。");
+            // 为了避免浏览器因为弹出过多下载窗口而拦截，我们使用一个短暂的延迟
+            processedFiles.forEach((file, index) => {
+                setTimeout(() => {
+                    downloadFile(file.blob, file.name);
+                }, index * 300); // 每隔 300 毫秒下载一个文件
+            });
+        }
+        
+        // 重新启用按钮
+        // 为了避免用户在多文件下载完成前再次点击，可以设置一个更长的延迟
+        setTimeout(() => {
+            downloadButton.disabled = false;
+        }, processedFiles.length * 300 + 500);
+    }
 })();
+
 
 
 
