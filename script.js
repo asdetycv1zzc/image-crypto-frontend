@@ -153,32 +153,35 @@ if ('serviceWorker' in navigator) {
     }
 
     /**
-     * 将原始尺寸编码到密钥行中。
-     * @param {Uint8Array} keyRow - 目标密钥行.
-     * @param {number} width - 原始宽度.
-     * @param {number} height - 原始高度.
+     * 将所有必要的元数据编码到一行像素中。
+     * @param {Uint8Array} metadataRow - 目标行.
+     * @param {object} metadata - 包含所有元数据的对象.
      */
-    function encodeDimensionsToKeyRow(keyRow, width, height) {
-        // 使用 DataView 来方便地写入 32 位整数，无需手动位移
-        const view = new DataView(keyRow.buffer);
-        // 0-3 字节存储宽度
-        view.setUint32(0, width, false); // false for big-endian
-        // 4-7 字节存储高度
-        view.setUint32(4, height, false); // false for big-endian
-        // keyRow 的剩余部分可以填充随机数
-        crypto.getRandomValues(keyRow.subarray(8));
+    function encodeMetadataToRow(metadataRow, metadata) {
+        const view = new DataView(metadataRow.buffer);
+        // 使用 32-bit 整数存储 5 个关键值
+        view.setUint32(0, metadata.originalWidth, false);
+        view.setUint32(4, metadata.originalHeight, false);
+        view.setUint32(8, metadata.contentWidth, false);
+        view.setUint32(12, metadata.contentHeight, false);
+        view.setUint32(16, metadata.totalBlocks, false);
+        // 剩余部分可以填充随机数或留空
     }
 
     /**
-     * 从密钥行中解码出原始尺寸。
-     * @param {Uint8Array} keyRow - 包含尺寸信息的密钥行.
-     * @returns {{width: number, height: number}} - 解码出的尺寸.
+     * 从一行像素中解码出所有元数据。
+     * @param {Uint8Array} metadataRow - 包含元数据的行.
+     * @returns {object} - 解码出的元数据对象.
      */
-    function decodeDimensionsFromKeyRow(keyRow) {
-        const view = new DataView(keyRow.buffer);
-        const width = view.getUint32(0, false);
-        const height = view.getUint32(4, false);
-        return {width, height};
+    function decodeMetadataFromRow(metadataRow) {
+        const view = new DataView(metadataRow.buffer);
+        return {
+            originalWidth: view.getUint32(0, false),
+            originalHeight: view.getUint32(4, false),
+            contentWidth: view.getUint32(8, false),
+            contentHeight: view.getUint32(12, false),
+            totalBlocks: view.getUint32(16, false),
+        };
     }
 
     /**
@@ -263,31 +266,53 @@ if ('serviceWorker' in navigator) {
 
 
     async function encryptWithShuffle(pixels, width, height) {
-        console.log("执行 Index-Shuffle 加密流程...");
+        console.log("执行加密 (向下取整方案)...");
 
-        const blocksX = Math.ceil(width / BLOCK_SIZE);
-        const blocksY = Math.ceil(height / BLOCK_SIZE);
-        const totalBlocks = blocksX * blocksY;
+        // 1. 计算可被整除的有效内容尺寸 (采纳您的建议)
+        const contentWidth = Math.floor(width / BLOCK_SIZE) * BLOCK_SIZE;
+        const contentHeight = Math.floor(height / BLOCK_SIZE) * BLOCK_SIZE;
 
-        const shuffleMap = Array.from({ length: totalBlocks }, (_, i) => i);
-        shuffleArray(shuffleMap);
-
-        const mapRows = Math.ceil(totalBlocks / width);
-        const newHeight = mapRows + height + 2;
-        const outputPixels = new Uint8Array(width * newHeight * CHANNELS);
-
-        // 1. 将 Shuffle Map 写入
-        for(let i=0; i<totalBlocks; i++){
-            encodeNumberToPixel(shuffleMap[i], outputPixels, i * CHANNELS);
+        if (contentWidth === 0 || contentHeight === 0) {
+            throw new Error("图片尺寸太小，无法进行分块加密。");
         }
 
-        // 2. 创建 keyRow 并将原始尺寸编码进去
-        const keyRowOffset = mapRows * width * CHANNELS;
-        const keyRow = outputPixels.subarray(keyRowOffset, keyRowOffset + width * CHANNELS);
-        encodeDimensionsToKeyRow(keyRow, width, height);
+        // 2. 基于有效尺寸，计算块信息 (不再有 Math.ceil)
+        const blocksX = contentWidth / BLOCK_SIZE;
+        const blocksY = contentHeight / BLOCK_SIZE;
+        const totalBlocks = blocksX * blocksY;
 
-        // 3. 复制图像数据
-        const imageContentStartRow = mapRows + 1;
+        // 3. 准备元数据
+        const metadata = {
+            originalWidth: width,
+            originalHeight: height,
+            contentWidth,
+            contentHeight,
+            totalBlocks
+        };
+
+        // 4. 创建并打乱 Shuffle Map
+        const shuffleMap = Array.from({length: totalBlocks}, (_, i) => i);
+        shuffleArray(shuffleMap);
+
+        // 5. 计算新图像尺寸
+        const mapRows = Math.ceil(totalBlocks / width);
+        const newHeight = 1 + mapRows + contentHeight + 1; // 1(meta)+map+content+1(magic)
+
+        // 6. 准备输出缓冲区
+        const outputPixels = new Uint8Array(width * newHeight * CHANNELS);
+
+        // 7. 写入元数据 (第 0 行)
+        const metadataRow = outputPixels.subarray(0, width * CHANNELS);
+        encodeMetadataToRow(metadataRow, metadata);
+
+        // 8. 写入 Shuffle Map (从第 1 行开始)
+        const mapStartOffset = width * CHANNELS;
+        for (let i = 0; i < totalBlocks; i++) {
+            encodeNumberToPixel(shuffleMap[i], outputPixels, mapStartOffset + i * CHANNELS);
+        }
+
+        // 9. 复制图像块 (只复制完整块)
+        const imageContentStartRow = 1 + mapRows;
         for (let i = 0; i < totalBlocks; i++) {
             const originalBlockIndex = shuffleMap[i];
             const srcBlockX = originalBlockIndex % blocksX;
@@ -297,16 +322,16 @@ if ('serviceWorker' in navigator) {
 
             copyBlock(
                 pixels, width, height, 0,
-                outputPixels, width, height, imageContentStartRow,
+                outputPixels, width, contentHeight, imageContentStartRow,
                 destBlockX, destBlockY, srcBlockX, srcBlockY
             );
         }
 
-        // 4. 在末尾添加 Magic Row
+        // 10. 写入 Magic Row (最后一行)
         const magicRow = generateMagicRow(width);
         outputPixels.set(magicRow, (newHeight - 1) * width * CHANNELS);
 
-        console.log("Shuffle 加密完成。");
+        console.log(`加密完成。有效内容 ${contentWidth}x${contentHeight}。`);
         return UPNG.encode([outputPixels.buffer], width, newHeight, 0);
     }
 
@@ -340,44 +365,44 @@ if ('serviceWorker' in navigator) {
 
 
     async function decryptWithShuffle(pixels, width, height) {
-        console.log("执行 Index-Shuffle 解密流程...");
+        console.log("执行解密 (确定性方案)...");
 
-        // 1. 临时计算 mapRows 来定位 keyRow
-        // 这个计算是临时的，并且可能不精确，但足以帮我们找到 keyRow 的大致位置
-        const tempBlocksX = Math.ceil(width / BLOCK_SIZE);
-        const tempBlocksY = Math.ceil((height - 2) / BLOCK_SIZE); // 减去 key/magic
-        const tempTotalBlocks = tempBlocksX * tempBlocksY;
-        let mapRows = Math.ceil(tempTotalBlocks / width);
+        // 1. 验证基本结构
+        if (height < 3) throw new Error("文件高度不足，无法解密。");
+        const lastRowOffset = (height - 1) * width * CHANNELS;
+        const lastRow = pixels.subarray(lastRowOffset, lastRowOffset + width * CHANNELS);
+        if (!areBuffersEqual(generateMagicRow(width), lastRow)) {
+            throw new Error("Magic Row 验证失败，非有效加密文件。");
+        }
 
-        // 2. 从 keyRow 精确解码原始尺寸
-        const keyRowOffset = mapRows * width * CHANNELS;
-        const keyRow = pixels.subarray(keyRowOffset, keyRowOffset + width * CHANNELS);
-        const { width: originalWidth, height: originalHeight } = decodeDimensionsFromKeyRow(keyRow);
+        // 2. 读取元数据 (第 0 行) - 绝对可靠
+        const metadataRow = pixels.subarray(0, width * CHANNELS);
+        const metadata = decodeMetadataFromRow(metadataRow);
 
-        // 安全校验
+        console.log("成功解码元数据:", metadata);
+
+        // 3. 从元数据中获取所有精确信息
+        const {originalWidth, originalHeight, contentWidth, contentHeight, totalBlocks} = metadata;
+
         if (originalWidth !== width) {
-            throw new Error(`解密失败：宽度不匹配！文件宽度 ${width}, 存储宽度 ${originalWidth}`);
+            throw new Error(`宽度不匹配: 文件为 ${width}px, 元数据为 ${originalWidth}px.`);
         }
-        if (originalHeight <= 0 || originalHeight > height) {
-            throw new Error(`解密失败：解码出的高度 ${originalHeight} 无效。`);
-        }
-        console.log(`从密钥行成功解码出原始尺寸: ${originalWidth}x${originalHeight}`);
 
-        // 3. 使用 100% 准确的尺寸，重新计算所有参数
-        const blocksX = Math.ceil(originalWidth / BLOCK_SIZE);
-        const blocksY = Math.ceil(originalHeight / BLOCK_SIZE);
-        const totalBlocks = blocksX * blocksY;
-        mapRows = Math.ceil(totalBlocks / originalWidth); // 覆盖掉临时的 mapRows
+        // 4. 创建空白的原始尺寸画布 (用浅灰色填充，便于观察)
+        const decryptedPixels = new Uint8Array(originalWidth * originalHeight * CHANNELS);
+        decryptedPixels.fill(240); // 填充为浅灰色，被丢弃的像素区域将显示为此色
 
-        // 4. 读取 Shuffle Map
+        // 5. 读取 Shuffle Map
+        const mapRows = Math.ceil(totalBlocks / originalWidth);
+        const mapStartOffset = originalWidth * CHANNELS;
         const shuffleMap = new Array(totalBlocks);
         for (let i = 0; i < totalBlocks; i++) {
-            shuffleMap[i] = decodeNumberFromPixel(pixels, i * CHANNELS);
+            shuffleMap[i] = decodeNumberFromPixel(pixels, mapStartOffset + i * CHANNELS);
         }
 
-        // 5. 恢复图像
-        const decryptedPixels = new Uint8Array(originalWidth * originalHeight * CHANNELS);
-        const encryptedContentStartRow = mapRows + 1;
+        // 6. 恢复图像块
+        const encryptedContentStartRow = 1 + mapRows;
+        const blocksX = contentWidth / BLOCK_SIZE;
 
         for (let i = 0; i < totalBlocks; i++) {
             const originalBlockIndex = shuffleMap[i];
@@ -387,13 +412,13 @@ if ('serviceWorker' in navigator) {
             const srcBlockY = Math.floor(i / blocksX);
 
             copyBlock(
-                pixels, originalWidth, originalHeight, encryptedContentStartRow,
+                pixels, originalWidth, contentHeight, encryptedContentStartRow,
                 decryptedPixels, originalWidth, originalHeight, 0,
                 destBlockX, destBlockY, srcBlockX, srcBlockY
             );
         }
 
-        console.log("Shuffle 解密完成。");
+        console.log("解密完成。");
         return UPNG.encode([decryptedPixels.buffer], originalWidth, originalHeight, 0);
     }
 
