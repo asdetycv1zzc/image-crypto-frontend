@@ -1221,9 +1221,4 @@ if(G>r)r=G;i++}while(i<y){A[i<<1]=0;A[(i<<1)+1]=0;i++}return r}return v}();
 	UPNG.quantize.findNearest=findNearest;
 	UPNG.quantize.getKDtree=getKDtree;
 	UPNG.quantize.getNearest=getNearest;
-	return {
-        decode: decode,
-        toRGBA8: toRGBA8,
-        encode: encode
-		};
 })();
