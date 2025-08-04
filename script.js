@@ -396,8 +396,8 @@ if ('serviceWorker' in navigator) {
 
         // 禁用按钮防止重复点击
         downloadButton.disabled = true;
-
-        if (isMobileDevice()) {
+        //if (isMobileDevice()) {
+        if (true) {
             // --- 手机端：打包为 ZIP 下载 ---
             console.log("检测到移动设备，打包为 ZIP 下载。");
             const zip = new JSZip();
