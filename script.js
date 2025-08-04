@@ -26,16 +26,28 @@
         return magicRow;
     }
 
-    function areBuffersEqual(buf1, buf2) {
-        if (!buf1 || !buf2 || buf1.byteLength !== buf2.byteLength) return false;
-        // 使用更快的比较方法
-        const view1 = new Uint8Array(buf1);
-        const view2 = new Uint8Array(buf2);
-        for (let i = view1.length - 1; i >= 0; i--) {
-            if (view1[i] !== view2[i]) return false;
+    function areBuffersEqual(view1, view2) {
+    // 传入的参数直接就是 Uint8Array 视图 (lastRow 和 expectedMagicRow)
+    if (!view1 || !view2 || view1.length !== view2.length) {
+        // [调试] 添加日志，看看长度是否匹配
+        if (view1 && view2) {
+            console.error(`Buffer 比较失败：长度不匹配。 view1.length=${view1.length}, view2.length=${view2.length}`);
         }
-        return true;
+        return false;
     }
+
+    // 直接逐字节比较视图内容
+    for (let i = 0; i < view1.length; i++) {
+        if (view1[i] !== view2[i]) {
+            // [调试] 如果发现不匹配，打印出具体位置和值
+            console.error(`Buffer 在索引 ${i} 处不匹配: view1[${i}]=${view1[i]}, view2[${i}]=${view2[i]}`);
+            return false;
+        }
+    }
+    
+    // 如果循环完成都没有返回 false，说明它们是相等的
+    return true;
+}
 
     function isEncrypted(pixelData, width, height) {
         if (height < 2) return false;
@@ -287,5 +299,6 @@ async function processImageFile(file) {
         URL.revokeObjectURL(link.href);
     }
 })();
+
 
 
