@@ -77,17 +77,39 @@ async function processImageFile(file) {
         const reader = new FileReader();
         reader.onload = async (event) => {
             try {
+                console.log(`--- 开始处理文件: ${file.name} ---`);
                 const buffer = event.target.result;
                 const { width, height, data: pixels } = decodeImage(buffer);
                 
                 if (!width || !height || !pixels || pixels.length === 0) {
                     throw new Error("解码失败，无法获取图片数据。");
                 }
+                
+                // [调试] 打印出解码后的图片信息
+                console.log(`解码后尺寸: ${width}x${height}`);
+
+                // [调试] 执行 isEncrypted 判断并打印结果
+                const isAlreadyEncrypted = isEncrypted(pixels, width, height);
+                console.log(`isEncrypted 函数返回: ${isAlreadyEncrypted}`);
+
+                // [调试] 如果是加密文件，我们打印出 magic row 的对比
+                if (height >= 2) {
+                    const expectedMagicRow = generateMagicRow(width);
+                    const lastRowOffset = (height - 1) * width * CHANNELS;
+                    const lastRow = pixels.subarray(lastRowOffset, lastRowOffset + width * CHANNELS);
+                    console.log("期望的 Magic Row (前16字节):", expectedMagicRow.slice(0, 16));
+                    console.log("实际的 Last Row (前16字节):", lastRow.slice(0, 16));
+                    // 检查两个 buffer 是否真的不相等
+                    if (!areBuffersEqual(lastRow, expectedMagicRow)) {
+                        console.warn("警告: Magic Row 对比失败！");
+                    }
+                }
+
 
                 let outputPngBuffer;
-                const isAlreadyEncrypted = isEncrypted(pixels, width, height);
 
                 if (isAlreadyEncrypted) {
+                    console.log("执行解密流程...");
                     // --- 解密流程 ---
                     const originalHeight = height - 2;
                     if (originalHeight <= 0) throw new Error("无效的加密文件，高度不足。");
@@ -96,21 +118,20 @@ async function processImageFile(file) {
                     const encryptedData = pixels.subarray(width * CHANNELS, (height - 1) * width * CHANNELS);
                     const decryptedData = new Uint8Array(width * originalHeight * CHANNELS);
                     
-                    // [算法恢复] 使用 i * j % width
                     for (let i = 0; i < originalHeight; i++) {
                         for (let j = 0; j < width; j++) {
-                            const keyPixelIndex = (i * j) % width; // 恢复为原始算法
-
+                            const keyPixelIndex = (i * j) % width;
                             const sourceOffset = (i * width + j) * CHANNELS;
                             const keyOffset = keyPixelIndex * CHANNELS;
-
                             for (let c = 0; c < CHANNELS; c++) {
                                 decryptedData[sourceOffset + c] = encryptedData[sourceOffset + c] ^ keyRow[keyOffset + c];
                             }
                         }
                     }
                     outputPngBuffer = UPNG.encode([decryptedData.buffer], width, originalHeight, 0);
+                    console.log("解密完成。");
                 } else {
+                    console.log("执行加密流程...");
                     // --- 加密流程 ---
                     const newHeight = height + 2;
                     const encryptedData = new Uint8Array(width * newHeight * CHANNELS);
@@ -119,15 +140,12 @@ async function processImageFile(file) {
                     crypto.getRandomValues(keyRow);
                     encryptedData.set(keyRow, 0);
 
-                    // [算法恢复] 使用 i * j % width
                     for (let i = 0; i < height; i++) {
                         for (let j = 0; j < width; j++) {
-                            const keyPixelIndex = (i * j) % width; // 恢复为原始算法
-
+                            const keyPixelIndex = (i * j) % width;
                             const sourceOffset = (i * width + j) * CHANNELS;
                             const destOffset = ((i + 1) * width + j) * CHANNELS;
                             const keyOffset = keyPixelIndex * CHANNELS;
-                            
                             for (let c = 0; c < CHANNELS; c++) {
                                 encryptedData[destOffset + c] = pixels[sourceOffset + c] ^ keyRow[keyOffset + c];
                             }
@@ -136,11 +154,12 @@ async function processImageFile(file) {
 
                     const magicRow = generateMagicRow(width);
                     encryptedData.set(magicRow, (newHeight - 1) * width * CHANNELS);
+                    console.log("加密时写入的 Magic Row (前16字节):", magicRow.slice(0, 16));
                     outputPngBuffer = UPNG.encode([encryptedData.buffer], width, newHeight, 0);
+                    console.log("加密完成。");
                 }
                 
                 const imageBlob = new Blob([outputPngBuffer], { type: 'image/png' });
-                // 文件名逻辑保持不变
                 const newFileName = isAlreadyEncrypted ? `decrypted-${file.name.replace(/\.png$/i, '')}` : `encrypted-${file.name.split('.').slice(0, -1).join('.') || file.name}.png`;
                 
                 resolve({ name: newFileName, blob: imageBlob });
@@ -268,4 +287,5 @@ async function processImageFile(file) {
         URL.revokeObjectURL(link.href);
     }
 })();
+
 
