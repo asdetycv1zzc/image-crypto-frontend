@@ -1,11 +1,28 @@
 #include <string.h> // 用于 memcpy
+#include <stdlib.h>
 #include <emscripten/emscripten.h>
 #include <wasm_simd128.h>
 
 // --- 常量定义 ---
 const int CHANNELS = 4;
 const int BLOCK_SIZE = 32;
-void memcpy_simd(unsigned char* restrict dest, const unsigned char* restrict src, size_t n);
+
+EMSCRIPTEN_KEEPALIVE
+void memcpy_simd(unsigned char* restrict dest, const unsigned char* restrict src, size_t n) {
+    size_t i = 0;
+    // 一次处理16个字节 (128位)
+    for (; i + 16 <= n; i += 16) {
+        // 从内存加载128位数据到向量寄存器
+        v128_t chunk = wasm_v128_load(&src[i]);
+        // 将向量寄存器的数据存储回内存
+        wasm_v128_store(&dest[i], chunk);
+    }
+    // 处理剩余不足16字节的数据
+    for (; i < n; i++) {
+        dest[i] = src[i];
+    }
+}
+
 /*
  * C 版本的 copyBlock 函数 (激进优化版)
  * 优化点:
@@ -132,21 +149,5 @@ void perform_decryption(
             originalBlockIndex % blocksX, originalBlockIndex / blocksX, // destBlockX, destBlockY
             i % blocksX, i / blocksX // srcBlockX, srcBlockY
         );
-    }
-}
-
-EMSCRIPTEN_KEEPALIVE
-void memcpy_simd(unsigned char* restrict dest, const unsigned char* restrict src, size_t n) {
-    size_t i = 0;
-    // 一次处理16个字节 (128位)
-    for (; i + 16 <= n; i += 16) {
-        // 从内存加载128位数据到向量寄存器
-        v128_t chunk = wasm_v128_load(&src[i]);
-        // 将向量寄存器的数据存储回内存
-        wasm_v128_store(&dest[i], chunk);
-    }
-    // 处理剩余不足16字节的数据
-    for (; i < n; i++) {
-        dest[i] = src[i];
     }
 }
