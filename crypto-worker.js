@@ -9,23 +9,20 @@ try {
     importScripts('jpeg-decoder.js', 'UPNG.js', 'bmp-decoder.js', 'image_processor.js');
 
     // 2. 立即进行断言式检查
-    console.log("Worker: importScripts 执行完毕。开始检查依赖...");
+    if (typeof decode === 'function') {
+        var jpeg = {
+            decode: decode
+        };
+        console.log("Worker: 'jpeg-decoder.js' 加载成功，并已手动包装 'jpeg' 对象。");
+    } else {
+        // 如果连裸的 decode 函数都没有，说明文件加载真的失败了
+        throw new Error("'jpeg-decoder.js' 未能提供全局的 'decode' 函数。");
+    }
+    // -----------------------------------------------------------------
 
-    if (typeof jpeg === 'undefined') {
-        console.error("Worker: 依赖检查失败 - 'jpeg' 未定义！");
-        throw new Error("jpeg-decoder.js未能正确加载或初始化。");
-    }
-    if (typeof UPNG === 'undefined') {
-        console.error("Worker: 依赖检查失败 - 'UPNG' 未定义！");
-        throw new Error("upng.min.js未能正确加载或初始化。");
-    }
-    if (typeof BmpDecoder === 'undefined') {
-        console.error("Worker: 依赖检查失败 - 'BmpDecoder' 未定义！");
-        throw new Error("bmp-decoder.min.js未能正确加载或初始化。");
-    }
-    if (typeof createImageProcessorModule === 'undefined') {
-        console.error("Worker: 依赖检查失败 - 'createImageProcessorModule' 未定义！");
-        throw new Error("image_processor.js未能正确加载或初始化。");
+    // 3. (可选但推荐) 进行统一的依赖检查
+    if (typeof jpeg === 'undefined' || typeof UPNG === 'undefined' || typeof BmpDecoder === 'undefined' || typeof createImageProcessorModule === 'undefined') {
+        throw new Error("一个或多个依赖库未能正确初始化。");
     }
 
     console.log("Worker: 所有依赖项均已成功加载！");
@@ -34,7 +31,7 @@ try {
     // 如果 importScripts 本身失败（例如404），这里会捕获到错误
     console.error("Worker: importScripts 失败:", e);
     // 向主线程报告一个致命的初始化错误
-    self.postMessage({ status: 'init_error', error: e.message });
+    self.postMessage({status: 'init_error', error: e.message});
 }
 
 let wasmApi = null;
