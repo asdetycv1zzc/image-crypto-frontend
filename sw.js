@@ -15,7 +15,7 @@ const URLS_TO_CACHE = [
     'js/jpeg-decoder.js',
     'js/bmp-decoder.js',
     "js/image_processor.js",
-    "wasm/image_processor.wasm",
+    "js/image_processor.wasm",
     "js/crypto-worker.js",
     // --- 您将在下一步创建的图标 ---
     'icons/icon-192x192.png',
