@@ -1,45 +1,10 @@
 // script.js (Cleaned Version)
-// 在 script.js 的顶部
 
-let wasmApi = null; // 初始化为 null
-
-// 页面加载时就禁用按钮，直到 WASM 准备就绪
 document.addEventListener('DOMContentLoaded', (event) => {
     const uploadButton = document.getElementById('uploadButton');
     if (uploadButton) uploadButton.disabled = true;
 });
 
-
-createImageProcessorModule().then(Module => {
-    console.log("WASM 模块已成功加载并初始化。");
-
-    // ------------------- 这是“创建者”的正确代码 -------------------
-    // 我们创建的 wasmApi 对象，必须包含完整的 Module 对象。
-    wasmApi = {
-        Module: Module, // 关键：存储整个 Module 对象
-        perform_encryption: Module.cwrap(
-            'perform_encryption', null, ['number', 'number', 'number', 'number', 'number', 'number', 'number', 'number']
-        ),
-        perform_decryption: Module.cwrap(
-            'perform_decryption', null, ['number', 'number', 'number', 'number', 'number', 'number', 'number', 'number']
-        )
-    };
-    // -----------------------------------------------------------------
-
-    // WASM 准备就绪，现在可以启用上传按钮了
-    const uploadButton = document.getElementById('uploadButton');
-    if (uploadButton) uploadButton.disabled = false;
-    console.log("WASM API 已准备就绪。");
-
-}).catch(err => {
-    // 增加一个 catch 来处理模块加载失败的情况
-    console.error("WASM 模块加载失败:", err);
-    // 可以在UI上显示错误信息
-    const resultsGrid = document.getElementById('results');
-    if (resultsGrid) {
-        resultsGrid.innerHTML = `<p class="status error">核心加密模块加载失败，请刷新页面重试。</p>`;
-    }
-});
 
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
