@@ -243,20 +243,28 @@ if ('serviceWorker' in navigator) {
     async function encryptWithShuffle(wasmApi, pixels, width, height) {
         console.log("执行加密 (WASM 优化方案)...");
 
-        const { Module, perform_encryption } = wasmApi; // 从 API 对象中解构出所需部分
+        const {Module, perform_encryption} = wasmApi;
 
-        // --- 步骤 1: 计算所有元数据和参数 (与之前相同) ---
+        // --- 步骤 1: 尺寸和参数校验 (核心修复点) ---
+        // 检查最小宽度要求：元数据行需要至少20字节，即宽度至少为5像素。
+        if (width < 5) {
+            throw new Error(`图片宽度太小 (${width}px)，无法写入元数据。最小宽度要求为 5px。`);
+        }
+
+        // 计算可用的内容区域
         const contentWidth = Math.floor(width / BLOCK_SIZE) * BLOCK_SIZE;
         const contentHeight = Math.floor(height / BLOCK_SIZE) * BLOCK_SIZE;
 
-        if (contentWidth === 0 || contentHeight === 0) {
-            throw new Error("图片尺寸太小，无法进行分块加密。");
+        // 检查内容区域是否足够进行分块
+        if (contentWidth < BLOCK_SIZE || contentHeight < BLOCK_SIZE) {
+            throw new Error(`图片尺寸太小 (有效区域 ${contentWidth}x${contentHeight}px)，无法进行分块加密。最小有效区域要求为 ${BLOCK_SIZE}x${BLOCK_SIZE}px。`);
         }
 
         const blocksX = contentWidth / BLOCK_SIZE;
         const blocksY = contentHeight / BLOCK_SIZE;
         const totalBlocks = blocksX * blocksY;
 
+        // --- 步骤 2: 计算元数据和参数 ---
         const metadata = {
             originalWidth: width,
             originalHeight: height,
@@ -265,72 +273,62 @@ if ('serviceWorker' in navigator) {
             totalBlocks
         };
 
-        const shuffleMap = Array.from({ length: totalBlocks }, (_, i) => i);
+        const shuffleMap = Array.from({length: totalBlocks}, (_, i) => i);
         shuffleArray(shuffleMap);
 
         const mapRows = Math.ceil(totalBlocks / width);
-        const newHeight = 1 + mapRows + height + 1; // 1(meta)+map+original_height+1(magic)
+        const newHeight = 1 + mapRows + height + 1;
 
-        // --- 步骤 2: 在 JavaScript 中创建并填充最终的输出缓冲区 ---
-        // 这个缓冲区将包含所有数据：元数据、映射表、加密图像和魔法行。
+        // --- 步骤 3: 在 JavaScript 中创建并填充最终的输出缓冲区 ---
         const outputPixels = new Uint8Array(width * newHeight * CHANNELS);
 
-        // 2a. 写入元数据行 (这是之前缺失的关键步骤)
+        // 3a. 写入元数据行 (现在可以安全地写入了)
         const metadataRow = outputPixels.subarray(0, width * CHANNELS);
         encodeMetadataToRow(metadataRow, metadata);
 
-        // 2b. 写入 Shuffle Map (这也是之前缺失的关键步骤)
+        // 3b. 写入 Shuffle Map
         const mapStartOffset = width * CHANNELS;
         for (let i = 0; i < totalBlocks; i++) {
             encodeNumberToPixel(shuffleMap[i], outputPixels, mapStartOffset + i * CHANNELS);
         }
 
-        // --- 步骤 3: 调用 WASM 执行核心的像素打乱操作 ---
+        // --- 步骤 4: 调用 WASM 执行核心的像素打乱操作 ---
         let originalPixelsPtr = 0, shuffleMapPtr = 0, outputImagePtr = 0;
 
         try {
-            // 3a. 在 WASM 内存中为输入数据分配空间
             originalPixelsPtr = Module._malloc(pixels.length);
             shuffleMapPtr = Module._malloc(shuffleMap.length * 4);
-            // 只为【图像数据部分】分配输出空间，因为元数据和map已在JS中处理
             outputImagePtr = Module._malloc(pixels.length);
 
             if (!originalPixelsPtr || !shuffleMapPtr || !outputImagePtr) {
                 throw new Error("在 WASM 中分配内存失败。");
             }
 
-            // 3b. 将数据复制到 WASM 的内存中
             Module.HEAPU8.set(pixels, originalPixelsPtr);
             Module.HEAPU32.set(new Uint32Array(shuffleMap), shuffleMapPtr / 4);
 
-            // 3c. 调用 C 函数。注意：最后一个参数是图像部分的输出指针，起始行为0
-            // C函数内部的逻辑不需要改变，它只是一个高效的“打乱器”
             perform_encryption(
                 originalPixelsPtr, width, height, contentWidth, contentHeight,
-                shuffleMapPtr,
-                outputImagePtr, // 输出目标是WASM中的临时图像缓冲区
-                0               // 在这个临时缓冲区中，图像内容的起始行是0
+                shuffleMapPtr, outputImagePtr, 0
             );
 
-            // 3d. 从 WASM 内存中将【已打乱的图像数据】复制回 JavaScript 的最终缓冲区
             const imageContentStartOffset = (1 + mapRows) * width * CHANNELS;
             const resultView = new Uint8Array(Module.HEAPU8.buffer, outputImagePtr, pixels.length);
             outputPixels.set(resultView, imageContentStartOffset);
 
         } finally {
-            // 3e. 无论成功与否，都必须释放 WASM 内存
             if (originalPixelsPtr) Module._free(originalPixelsPtr);
             if (shuffleMapPtr) Module._free(shuffleMapPtr);
             if (outputImagePtr) Module._free(outputImagePtr);
         }
 
-        // --- 步骤 4: 写入最后的 Magic Row (这也是之前缺失的关键步骤) ---
+        // --- 步骤 5: 写入最后的 Magic Row ---
         const magicRow = generateMagicRow(width);
         outputPixels.set(magicRow, (newHeight - 1) * width * CHANNELS);
 
         console.log(`WASM 无损加密完成。`);
 
-        // --- 步骤 5: 将填充完毕的、完整的缓冲区进行 PNG 编码 ---
+        // --- 步骤 6: 将填充完毕的、完整的缓冲区进行 PNG 编码 ---
         return UPNG.encode([outputPixels.buffer], width, newHeight, 0);
     }
 
