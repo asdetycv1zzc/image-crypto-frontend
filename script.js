@@ -136,7 +136,7 @@ if ('serviceWorker' in navigator) {
     // 图片处理的主函数
     // 在您的 script.js 中，找到并替换这个函数
 
-    const BLOCK_SIZE = 16; // 定义块大小为 16x16 像素，可以调整
+    const BLOCK_SIZE = 32;
     const MAP_PIXEL_CHANNELS = 4; // 用一个 RGBA 像素来存一个 32 位整数的 map index
 
     /**
