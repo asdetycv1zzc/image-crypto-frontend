@@ -61,7 +61,7 @@ typedef struct {
 
 // 这是传递给 stbi_write_png_to_func 的回调函数
 // stb 会一块一块地调用这个函数，把编码好的PNG数据传给我们
-void write_func_callback(void* context, void* data, int size) {
+static inline void write_func_callback(void* context, void* data, int size) {
     WriteContext* ctx = (WriteContext*)context;
 
     // 重新分配内存以容纳新的数据块

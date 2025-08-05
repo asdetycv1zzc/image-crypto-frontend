@@ -8,7 +8,7 @@ const int CHANNELS = 4;
 const int BLOCK_SIZE = 32;
 
 EMSCRIPTEN_KEEPALIVE
-void memcpy_simd(unsigned char* restrict dest, const unsigned char* restrict src, size_t n) {
+inline void memcpy_simd(unsigned char* restrict dest, const unsigned char* restrict src, size_t n) {
     size_t i = 0;
     // 一次处理16个字节 (128位)
     for (; i + 16 <= n; i += 16) {
@@ -34,7 +34,7 @@ void memcpy_simd(unsigned char* restrict dest, const unsigned char* restrict src
  * 对应的 JavaScript 代码: (逻辑等同于原版)
  * function copyBlock(...) { ... }
  */
-static inline void copyBlock(
+inline void copyBlock(
     const unsigned char* restrict src, int srcWidth, int srcContentHeight, int srcStartRow,
     unsigned char* restrict dest, int destWidth, int destContentHeight, int destStartRow,
     int destBlockX, int destBlockY, int srcBlockX, int srcBlockY) {
