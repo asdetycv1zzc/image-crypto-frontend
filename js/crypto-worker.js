@@ -1,32 +1,12 @@
-// crypto-worker.js
-
-// 引入Emscripten生成的JS胶水文件，这是让每个worker加载WASM最简单的方式
-importScripts("pako.min.js");
-
 try {
     // 1. 引入所有脚本。将它们放在一个 try...catch 块中。
     // 把最可疑的放在前面。
-    importScripts('jpeg-decoder.js', 'UPNG.js', 'bmp-decoder.js', 'image_processor.js');
-
-    // 2. 立即进行断言式检查
-    if (typeof decode === 'function') {
-        var jpeg = {
-            decode: decode
-        };
-        console.log("Worker: 'jpeg-decoder.js' 加载成功，并已手动包装 'jpeg' 对象。");
-    } else {
-        // 如果连裸的 decode 函数都没有，说明文件加载真的失败了
-        throw new Error("'jpeg-decoder.js' 未能提供全局的 'decode' 函数。");
-    }
-    // -----------------------------------------------------------------
+    importScripts('image_processor.js');
 
     // 3. (可选但推荐) 进行统一的依赖检查
-    if (typeof jpeg === 'undefined' || typeof UPNG === 'undefined' || typeof BmpDecoder === 'undefined' || typeof createImageProcessorModule === 'undefined') {
+    if (typeof createImageProcessorModule === 'undefined') {
         throw new Error("一个或多个依赖库未能正确初始化。");
     }
-
-    console.log("Worker: 所有依赖项均已成功加载！");
-
 } catch (e) {
     // 如果 importScripts 本身失败（例如404），这里会捕获到错误
     console.error("Worker: importScripts 失败:", e);
@@ -36,28 +16,104 @@ try {
 
 let wasmApi = null;
 
-function decodeImage(buffer) {
-    const view = new Uint8Array(buffer);
-    let type = 'UNKNOWN';
-    if (view.length > 3 && view[0] === 0x89 && view[1] === 0x50 && view[2] === 0x4E && view[3] === 0x47) type = 'PNG';
-    else if (view.length > 2 && view[0] === 0xFF && view[1] === 0xD8 && view[2] === 0xFF) type = 'JPG';
-    else if (view.length > 1 && view[0] === 0x42 && view[1] === 0x4D) type = 'BMP';
+/**
+ * 使用 WASM (stb_image) 解码图像数据。
+ * @param {object} wasmApi - 已初始化的 WASM API 对象。
+ * @param {ArrayBuffer} fileBuffer - 包含原始图像文件（PNG, JPG, BMP等）的 ArrayBuffer。
+ * @returns {{width: number, height: number, data: Uint8Array}} 解码后的 RGBA 像素数据。
+ */
+function decodeImageWasm(wasmApi, fileBuffer) {
+    console.log("使用 WASM 解码图像...");
+    const {Module, decode_image, _free} = wasmApi;
+    let imagePtr = 0, widthPtr = 0, heightPtr = 0, decodedPtr = 0;
 
-    if (type === 'PNG') {
-        // UPNG 是由 UPNG.js 创建的全局变量
-        const img = UPNG.decode(buffer);
-        return {width: img.width, height: img.height, data: new Uint8Array(UPNG.toRGBA8(img)[0])};
+    try {
+        // 1. 在 WASM 内存中为输入图像数据分配空间
+        const imageSize = fileBuffer.byteLength;
+        imagePtr = Module._malloc(imageSize);
+        if (!imagePtr) throw new Error("WASM _malloc 失败：无法为输入图像分配内存。");
+
+        // 2. 将 JS 的 ArrayBuffer 数据复制到 WASM 内存中
+        Module.HEAPU8.set(new Uint8Array(fileBuffer), imagePtr);
+
+        // 3. 为输出参数（宽度和高度）分配内存
+        widthPtr = Module._malloc(4); // int
+        heightPtr = Module._malloc(4); // int
+        if (!widthPtr || !heightPtr) throw new Error("WASM _malloc 失败：无法为维度指针分配内存。");
+
+        // 4. 调用 C 函数进行解码
+        decodedPtr = decode_image(imagePtr, imageSize, widthPtr, heightPtr);
+        if (!decodedPtr) {
+            throw new Error("图像解码失败。WASM 函数返回空指针，可能是不支持的格式或文件已损坏。");
+        }
+
+        // 5. 从 WASM 内存中读回解码后的宽度和高度
+        const width = Module.getValue(widthPtr, 'i32');
+        const height = Module.getValue(heightPtr, 'i32');
+        if (width === 0 || height === 0) throw new Error("WASM 解码返回无效的尺寸。");
+
+        // 6. 将解码后的像素数据从 WASM 内存复制到 JS 内存
+        // 至关重要：使用 .slice() 创建一个副本，因为我们马上要释放 WASM 内存。
+        const decodedSize = width * height * 4; // RGBA
+        const pixels = new Uint8Array(Module.HEAPU8.buffer, decodedPtr, decodedSize).slice();
+
+        console.log(`WASM 解码成功: ${width}x${height}`);
+        return {width, height, data: pixels};
+
+    } finally {
+        // 7. 释放所有在 WASM 中分配的内存，防止内存泄漏
+        if (imagePtr) _free(imagePtr);
+        if (widthPtr) _free(widthPtr);
+        if (heightPtr) _free(heightPtr);
+        if (decodedPtr) _free(decodedPtr); // stb_image 使用 malloc，所以必须释放
     }
-    if (type === 'JPG') {
-        // jpeg 是由 jpeg-decoder.js 创建的全局变量
-        return jpeg.decode(view, {useTArray: true});
+}
+
+/**
+ * 使用 WASM (stb_image_write) 将 RGBA 像素数据编码为 PNG 文件。
+ * @param {object} wasmApi - 已初始化的 WASM API 对象。
+ * @param {Uint8Array} pixels - 原始 RGBA 像素数据。
+ * @param {number} width - 图像宽度。
+ * @param {number} height - 图像高度。
+ * @returns {ArrayBuffer} 包含最终 PNG 文件数据的 ArrayBuffer。
+ */
+function encodePngWasm(wasmApi, pixels, width, height) {
+    console.log("使用 WASM 编码 PNG...");
+    const {Module, encode_png, _free} = wasmApi;
+    let pixelsPtr = 0, sizePtr = 0, resultPtr = 0;
+
+    try {
+        // 1. 在 WASM 内存中为输入像素数据分配空间并复制
+        pixelsPtr = Module._malloc(pixels.length);
+        if (!pixelsPtr) throw new Error("WASM _malloc 失败：无法为像素缓冲区分配内存。");
+        Module.HEAPU8.set(pixels, pixelsPtr);
+
+        // 2. 为输出参数（PNG 文件大小）分配内存
+        sizePtr = Module._malloc(4); // size_t
+        if (!sizePtr) throw new Error("WASM _malloc 失败：无法为大小指针分配内存。");
+
+        // 3. 调用 C 函数进行编码
+        resultPtr = encode_png(pixelsPtr, width, height, sizePtr);
+        if (!resultPtr) {
+            throw new Error("PNG 编码失败。WASM 函数返回空指针。");
+        }
+
+        // 4. 从 WASM 内存中读回编码后的文件大小
+        const resultSize = Module.getValue(sizePtr, 'i32');
+
+        // 5. 将编码后的 PNG 数据从 WASM 内存复制到 JS 的 ArrayBuffer
+        // 同样，使用 .slice().buffer 创建一个独立的副本。
+        const resultBuffer = new Uint8Array(Module.HEAPU8.buffer, resultPtr, resultSize).slice().buffer;
+
+        console.log(`WASM 编码成功，大小: ${resultSize} 字节`);
+        return resultBuffer;
+
+    } finally {
+        // 6. 释放所有在 WASM 中分配的内存
+        if (pixelsPtr) _free(pixelsPtr);
+        if (sizePtr) _free(sizePtr);
+        if (resultPtr) _free(resultPtr); // 我们的 C 代码分配了此内存，必须释放
     }
-    if (type === 'BMP') {
-        // BmpDecoder 是由 bmp-decoder.js 创建的全局变量
-        const decoder = new BmpDecoder(Buffer.from(view)); // bmp-js 需要一个 Buffer-like 对象
-        return {width: decoder.width, height: decoder.height, data: decoder.getData()};
-    }
-    throw new Error(`不支持的图片格式 (${type}) 或文件已损坏。`);
 }
 
 const MAGIC_PIXEL_PATTERN = [
@@ -116,25 +172,33 @@ function isEncrypted(pixelData, width, height) {
 // 等待WASM运行时初始化完成
 createImageProcessorModule()
     .then(Module => {
-        // 4. 当Promise解析后，我们才真正得到了Module对象
         console.log("Worker: WASM 模块已加载并初始化。");
 
-        // 5. 现在可以安全地创建 wasmApi 对象了
+        // 填充 wasmApi 对象，包含所有需要从 JS 调用的 C 函数
         wasmApi = {
             Module: Module,
+            // 内存管理
+            _free: Module._free,
+            // 来自 image_process.c
             perform_encryption: Module.cwrap(
                 'perform_encryption', null, ['number', 'number', 'number', 'number', 'number', 'number', 'number', 'number']
             ),
             perform_decryption: Module.cwrap(
                 'perform_decryption', null, ['number', 'number', 'number', 'number', 'number', 'number', 'number', 'number']
-            )
+            ),
+            // 来自 image_codecs_wasm.c
+            decode_image: Module.cwrap(
+                'decode_image_wasm', 'number', ['number', 'number', 'number', 'number']
+            ),
+            encode_png: Module.cwrap(
+                'encode_png_wasm', 'number', ['number', 'number', 'number', 'number']
+            ),
         };
 
-        // 6. 向主线程发送“准备就绪”的消息，表明这个worker可以开始接收任务了
+        // 向主线程发送“准备就绪”的消息
         self.postMessage({status: 'ready'});
     })
     .catch(err => {
-        // 如果模块在worker内部加载失败，也要通知主线程
         console.error("Worker: WASM 模块加载失败:", err);
         self.postMessage({status: 'error', error: `WASM 模块加载失败: ${err.message}`});
     });
@@ -146,7 +210,7 @@ self.onmessage = async (event) => {
         return;
     }
 
-    const {file, fileBuffer, fileName} = event.data;
+    const {fileBuffer, fileName} = event.data;
 
     try {
         // -----------------------------------------------------------------
@@ -155,7 +219,7 @@ self.onmessage = async (event) => {
         // -----------------------------------------------------------------
 
         // 1. 解码图片
-        const {width, height, data: pixels} = decodeImage(fileBuffer); // 假设 decodeImage 等工具函数也在此作用域可用
+        const {width, height, data: pixels} = decodeImageWasm(wasmApi, fileBuffer);
 
         if (!width || !height) {
             throw new Error("解码失败，无法获取图片数据。");
@@ -190,54 +254,6 @@ self.onmessage = async (event) => {
         });
     }
 };
-
-// --- 您需要将所有依赖的函数 (decodeImage, isEncrypted, etc.) 也放入Worker中 ---
-// 简单的方法是通过 importScripts() 引入它们所在的js文件。
-// 例如: importScripts('image-decoders.js', 'helpers.js');
-// 或者将这些函数直接复制粘贴到这个 worker 文件的顶部。
-async function processImageFile(file) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = async (event) => {
-            try {
-                console.log(`--- 开始处理文件: ${file.name} ---`);
-                const buffer = event.target.result;
-                const {width, height, data: pixels} = decodeImage(buffer);
-
-                if (!width || !height || !pixels || pixels.length === 0) {
-                    throw new Error("解码失败，无法获取图片数据。");
-                }
-
-                console.log(`解码后尺寸: ${width}x${height}`);
-
-                const isAlreadyEncrypted = isEncrypted(pixels, width, height);
-                console.log(`isEncrypted 函数返回: ${isAlreadyEncrypted}`);
-
-                let outputPngBuffer;
-
-                if (isAlreadyEncrypted) {
-                    // 如果检测到 magic row，使用新的 shuffle 解密器
-                    outputPngBuffer = await decryptWithShuffle(wasmApi, pixels, width, height);
-                } else {
-                    // 否则，使用新的 shuffle 加密器
-                    outputPngBuffer = await encryptWithShuffle(wasmApi, pixels, width, height);
-                }
-
-                const imageBlob = new Blob([outputPngBuffer], {type: 'image/png'});
-                const newFileName = isAlreadyEncrypted ? `decrypted-shuffled-${file.name.replace(/\.png$/i, '')}` : `encrypted-shuffled-${file.name.split('.').slice(0, -1).join('.') || file.name}.png`;
-
-                resolve({name: newFileName, blob: imageBlob});
-            } catch (error) {
-                console.error("处理图片时发生错误:", error);
-                // 提供更具体的错误信息给卡片
-                const errorMessage = error.message || "未知错误";
-                reject(new Error(`处理失败: ${errorMessage}`));
-            }
-        };
-        reader.onerror = (error) => reject(new Error("文件读取失败。"));
-        reader.readAsArrayBuffer(file);
-    });
-}
 
 // 在您的 script.js 中，完整替换这个函数
 async function encryptWithShuffle(wasmApi, pixels, width, height) {
@@ -329,7 +345,7 @@ async function encryptWithShuffle(wasmApi, pixels, width, height) {
     console.log(`WASM 无损加密完成。`);
 
     // --- 步骤 6: 将填充完毕的、完整的缓冲区进行 PNG 编码 ---
-    return UPNG.encode([outputPixels.buffer], width, newHeight, 0);
+    return encodePngWasm(wasmApi, outputPixels, width, newHeight);
 }
 
 const BLOCK_SIZE = 32;
@@ -513,7 +529,7 @@ async function decryptWithShuffle(wasmApi, pixels, width, height) {
 
         // 步骤 8: 使用解密后的像素数据编码成最终的 PNG 文件
         // UPNG.encode 期望一个 ArrayBuffer 的数组，所以我们传入 .buffer。
-        return UPNG.encode([finalDecryptedPixels.buffer], originalWidth, originalHeight, 0);
+        return encodePngWasm(wasmApi, finalDecryptedPixels, originalWidth, originalHeight);
 
     } finally {
         // 步骤 9: 无论成功与否，都必须释放 WASM 内存以避免内存泄漏
