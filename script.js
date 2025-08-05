@@ -183,28 +183,36 @@ if ('serviceWorker' in navigator) {
     }
 
     /**
-     * 将所有必要的元数据编码到一行像素中。
-     * @param {Uint8Array} metadataRow - 目标行.
+     * 将所有必要的元数据编码到一行像素中。 (修正版)
+     * @param {Uint8Array} metadataRow - 目标行 (这是一个 subarray 视图).
      * @param {object} metadata - 包含所有元数据的对象.
      */
     function encodeMetadataToRow(metadataRow, metadata) {
-        const view = new DataView(metadataRow.buffer);
-        // 使用 32-bit 整数存储 5 个关键值
+        // --- 核心修正 ---
+        // 当从一个 TypedArray 的 subarray 创建 DataView 时，
+        // 必须使用包含 byteOffset 和 byteLength 的构造函数，
+        // 以确保 DataView 精确地覆盖 subarray 的范围，而不是整个底层 buffer。
+        const view = new DataView(metadataRow.buffer, metadataRow.byteOffset, metadataRow.byteLength);
+
+        // 现在 view 的范围是正确的，写入操作将是安全的。
         view.setUint32(0, metadata.originalWidth, false);
         view.setUint32(4, metadata.originalHeight, false);
         view.setUint32(8, metadata.contentWidth, false);
         view.setUint32(12, metadata.contentHeight, false);
         view.setUint32(16, metadata.totalBlocks, false);
-        // 剩余部分可以填充随机数或留空
     }
 
     /**
-     * 从一行像素中解码出所有元数据。
-     * @param {Uint8Array} metadataRow - 包含元数据的行.
+     * 从一行像素中解码出所有元数据。 (修正版)
+     * @param {Uint8Array} metadataRow - 包含元数据的行 (这是一个 subarray 视图).
      * @returns {object} - 解码出的元数据对象.
      */
     function decodeMetadataFromRow(metadataRow) {
-        const view = new DataView(metadataRow.buffer);
+        // --- 核心修正 ---
+        // 同样，为解密函数也应用相同的、正确的 DataView 创建方式，
+        // 以保证代码的健壮性。
+        const view = new DataView(metadataRow.buffer, metadataRow.byteOffset, metadataRow.byteLength);
+
         return {
             originalWidth: view.getUint32(0, false),
             originalHeight: view.getUint32(4, false),
