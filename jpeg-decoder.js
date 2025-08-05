@@ -1160,5 +1160,3 @@ function decode(jpegData, userOpts = {}) {
 
     return image;
 }
-
-window.jpeg = {decode: decode}
