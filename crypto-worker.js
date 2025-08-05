@@ -3,6 +3,9 @@
 // 引入Emscripten生成的JS胶水文件，这是让每个worker加载WASM最简单的方式
 importScripts('image_processor.js');
 importScripts('utils.js');
+importScripts('UPNG.js');
+importScripts('bmp-decoder.js');
+importScripts('jpeg-decoder.js');
 let wasmApi = null;
 
 // Module 是由 image_processor.js 创建的全局对象
