@@ -1,11 +1,13 @@
 // crypto-worker.js
 
 // 引入Emscripten生成的JS胶水文件，这是让每个worker加载WASM最简单的方式
+importScripts("pako.min.js");
 importScripts('utils.js');
 importScripts('UPNG.js');
 importScripts('bmp-decoder.js');
 importScripts('jpeg-decoder.js');
 importScripts('image_processor.js');
+
 let wasmApi = null;
 
 // Module 是由 image_processor.js 创建的全局对象
@@ -134,6 +136,7 @@ async function processImageFile(file) {
         reader.readAsArrayBuffer(file);
     });
 }
+
 // 在您的 script.js 中，完整替换这个函数
 async function encryptWithShuffle(wasmApi, pixels, width, height) {
     console.log("执行加密 (WASM 优化方案)...");
