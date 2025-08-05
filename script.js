@@ -540,20 +540,18 @@ if ('serviceWorker' in navigator) {
             allImageFiles.forEach(file => createResultCard(file.name));
 
             // 3. 并行处理所有找到的图片文件
-            const processingPromises = allImageFiles.map(file => {
-                return processImageFile(file)
-                    .then(result => {
-                        processedFiles.push(result);
-                        // 使用 file.name 来确保我们能更新正确的卡片
-                        updateCardStatus(file.name, 'success', '处理成功', result.blob);
-                    })
-                    .catch(error => {
-                        updateCardStatus(file.name, 'error', error.message, null);
-                    });
-            });
-
-            // 等待所有处理任务完成
-            await Promise.allSettled(processingPromises);
+            for (const file of allImageFiles) {
+                try {
+                    // await 会暂停循环，直到 processImageFile 完成（或失败）
+                    const result = await processImageFile(file);
+                    processedFiles.push(result);
+                    // 使用 file.name 来确保我们能更新正确的卡片
+                    updateCardStatus(file.name, 'success', '处理成功', result.blob);
+                } catch (error) {
+                    // 如果单个文件处理失败，捕获错误，更新其卡片，然后循环继续处理下一个文件
+                    updateCardStatus(file.name, 'error', error.message, null);
+                }
+            }
 
         } catch (error) {
             console.error("处理上传文件时发生严重错误:", error);
