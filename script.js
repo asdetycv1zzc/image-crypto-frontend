@@ -45,34 +45,40 @@ if ('serviceWorker' in navigator) {
     }
 
     function scheduleTasks() {
-        // 如果没有待处理的任务，或者当前没有在工作，就直接返回
-        if (taskQueue.length === 0 || !isWorking) {
-            // 检查是否所有任务都完成了
-            checkIfAllDone();
-            return;
+        // 使用一个循环来持续派发任务，直到无法再派发为止
+        while (true) {
+            // 如果没有待处理的任务，或者当前没有在工作，就直接返回
+            if (taskQueue.length === 0 || !isWorking) {
+                // 检查是否所有任务都完成了
+                checkIfAllDone();
+                return; // 退出循环和函数
+            }
+
+            // 寻找一个不忙的工人
+            const freeWorkerWrapper = workerPool.find(w => !w.isBusy);
+            if (!freeWorkerWrapper) {
+                return; // 所有工人都在忙，退出循环和函数
+            }
+
+            // --- 以下是成功派发一个任务的逻辑 ---
+
+            // 从队列头部取出一个任务
+            const task = taskQueue.shift();
+
+            // 将工人标记为“忙碌”
+            freeWorkerWrapper.isBusy = true;
+
+            // 在UI上更新卡片状态
+            updateCardStatus(task.file.name, 'processing', '正在处理...', null);
+
+            // 将任务发送给工人
+            freeWorkerWrapper.worker.postMessage({
+                fileName: task.file.name,
+                fileBuffer: task.buffer
+            }, [task.buffer]);
+
+            // **核心修正**: 循环将继续，立即尝试为下一个任务寻找下一个空闲的工人。
         }
-
-        // 寻找一个不忙的工人
-        const freeWorkerWrapper = workerPool.find(w => !w.isBusy);
-        if (!freeWorkerWrapper) {
-            return; // 所有工人都在忙，等待下一次机会
-        }
-
-        // 从队列头部取出一个任务
-        const task = taskQueue.shift();
-
-        // 将工人标记为“忙碌”
-        freeWorkerWrapper.isBusy = true;
-
-        // 在UI上更新卡片状态，告知用户“正在处理”
-        updateCardStatus(task.file.name, 'processing', '正在处理...', null);
-
-        // 将任务（文件内容）发送给工人
-        // ArrayBuffer作为可转移对象发送，以避免昂贵的内存复制开销
-        freeWorkerWrapper.worker.postMessage({
-            fileName: task.file.name,
-            fileBuffer: task.buffer
-        }, [task.buffer]);
     }
 
     // --- 加密/解密核心逻辑 (现在只包含我们自己的函数) ---
