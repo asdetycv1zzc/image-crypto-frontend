@@ -10,10 +10,6 @@ const URLS_TO_CACHE = [
     'js/script.js',
     // --- 您的第三方库 ---
     'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
-    'js/pako.min.js',
-    'js/UPNG.js',
-    'js/jpeg-decoder.js',
-    'js/bmp-decoder.js',
     "js/image_processor.js",
     "js/image_processor.wasm",
     "js/crypto-worker.js",
