@@ -1,11 +1,11 @@
 // crypto-worker.js
 
 // 引入Emscripten生成的JS胶水文件，这是让每个worker加载WASM最简单的方式
-importScripts('image_processor.js');
 importScripts('utils.js');
 importScripts('UPNG.js');
 importScripts('bmp-decoder.js');
 importScripts('jpeg-decoder.js');
+importScripts('image_processor.js');
 let wasmApi = null;
 
 // Module 是由 image_processor.js 创建的全局对象
@@ -58,9 +58,9 @@ self.onmessage = async (event) => {
         }
 
         // 2. 加密或解密
-        const isEncrypted = isEncrypted(pixels, width, height);
+        const encrypted = isEncrypted(pixels, width, height);
         let outputPngBuffer;
-        if (isEncrypted) {
+        if (encrypted) {
             outputPngBuffer = await decryptWithShuffle(wasmApi, pixels, width, height);
         } else {
             outputPngBuffer = await encryptWithShuffle(wasmApi, pixels, width, height);
@@ -73,7 +73,7 @@ self.onmessage = async (event) => {
             originalFileName: fileName,
             result: {
                 buffer: outputPngBuffer,
-                newFileName: isEncrypted ? `decrypted-${fileName}` : `encrypted-${fileName}.png`
+                newFileName: encrypted ? `decrypted-${fileName}` : `encrypted-${fileName}.png`
             }
         }, [outputPngBuffer]);
 

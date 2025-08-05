@@ -1,4 +1,4 @@
-function decodeImage(buffer) {
+export function decodeImage(buffer) {
     const view = new Uint8Array(buffer);
     let type = 'UNKNOWN';
     if (view.length > 3 && view[0] === 0x89 && view[1] === 0x50 && view[2] === 0x4E && view[3] === 0x47) type = 'PNG';
@@ -30,7 +30,7 @@ const MAGIC_PIXEL_PATTERN = [
 ];
 const CHANNELS = 4;
 
-function generateMagicRow(width) {
+export function generateMagicRow(width) {
     const magicRow = new Uint8Array(width * CHANNELS);
     for (let j = 0; j < width; j++) {
         const patternPixel = MAGIC_PIXEL_PATTERN[j % MAGIC_PIXEL_PATTERN.length];
@@ -43,7 +43,7 @@ function generateMagicRow(width) {
     return magicRow;
 }
 
-function areBuffersEqual(view1, view2) {
+export function areBuffersEqual(view1, view2) {
     // 传入的参数直接就是 Uint8Array 视图 (lastRow 和 expectedMagicRow)
     if (!view1 || !view2 || view1.length !== view2.length) {
         // [调试] 添加日志，看看长度是否匹配
@@ -66,7 +66,7 @@ function areBuffersEqual(view1, view2) {
     return true;
 }
 
-function isEncrypted(pixelData, width, height) {
+export function isEncrypted(pixelData, width, height) {
     if (height < 2) return false;
     const expectedMagicRow = generateMagicRow(width);
     const lastRowOffset = (height - 1) * width * CHANNELS;
