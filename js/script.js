@@ -32,7 +32,7 @@ if ('serviceWorker' in navigator) {
 // --- 2. Worker 池的初始化 ---
 
     for (let i = 0; i < MAX_WORKERS; i++) {
-        const worker = new Worker('crypto-worker.js');
+        const worker = new Worker('js/crypto-worker.js');
 
         // 为每个 worker 设置消息处理器
         worker.onmessage = (event) => {
