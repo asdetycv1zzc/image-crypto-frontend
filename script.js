@@ -167,7 +167,6 @@ if ('serviceWorker' in navigator) {
     // 在您的 script.js 中，找到并替换这个函数
 
     const BLOCK_SIZE = 32;
-    const MAP_PIXEL_CHANNELS = 4; // 用一个 RGBA 像素来存一个 32 位整数的 map index
 
     /**
      * 将一个 32 位整数（块索引）编码到一个 RGBA 像素中。
@@ -477,7 +476,7 @@ if ('serviceWorker' in navigator) {
                         outputPngBuffer = await decryptWithShuffle(pixels, width, height);
                     } else {
                         // 否则，使用新的 shuffle 加密器
-                        outputPngBuffer = await encryptWithShuffle(pixels, width, height);
+                        outputPngBuffer = await encryptWithShuffle(wasmApi, pixels, width, height);
                     }
 
                     const imageBlob = new Blob([outputPngBuffer], {type: 'image/png'});
