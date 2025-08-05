@@ -195,6 +195,20 @@ button:disabled {
     background-color: #f0f8ff !important;
 }
 
+.result-card.clickable {
+    /* 鼠标悬停时显示为可点击的手形光标 */
+    cursor: pointer;
+    /* 为动画效果添加过渡 */
+    transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+}
+
+.result-card.clickable:hover {
+    /* 鼠标悬停时，卡片向上轻微浮动 */
+    transform: translateY(-5px);
+    /* 同时增加一点阴影，增强立体感 */
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15);
+}
+
 @keyframes spin {
     to {
         transform: rotate(360deg);

@@ -1,6 +1,6 @@
 // sw.js
 
-const CACHE_NAME = 'image-encryptor-v1';
+const CACHE_NAME = 'image-encryptor-v2';
 
 // 需要缓存的完整文件列表，包括所有 HTML、CSS、JS 和第三方库
 const URLS_TO_CACHE = [

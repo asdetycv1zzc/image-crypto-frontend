@@ -336,34 +336,6 @@ if ('serviceWorker' in navigator) {
         return UPNG.encode([outputPixels.buffer], width, newHeight, 0);
     }
 
-    /**
-     * 通过迭代反向计算，从加密后的高度精确求解出原始高度。
-     * @param {number} encryptedHeight - 加密后的图片总高度.
-     * @param {number} width - 图片宽度.
-     * @returns {number} - 原始图片的高度，如果无解则返回 -1.
-     */
-    function solveOriginalHeight(encryptedHeight, width) {
-        const blocksX = Math.ceil(width / BLOCK_SIZE);
-
-        // 我们从可能的最高原始高度开始向下迭代
-        // 原始高度至少比加密高度小3 (1 for map, 1 for key, 1 for magic)
-        for (let h_orig = encryptedHeight - 3; h_orig > 0; h_orig--) {
-            const blocksY = Math.ceil(h_orig / BLOCK_SIZE);
-            const totalBlocks = blocksX * blocksY;
-            const mapPixels = totalBlocks;
-            const mapRows = Math.ceil(mapPixels / width);
-
-            // 检查这个假设的原始高度是否满足我们的方程
-            if (encryptedHeight === h_orig + mapRows + 2) {
-                // 找到了唯一解！
-                return h_orig;
-            }
-        }
-
-        // 如果循环结束还没找到，说明文件格式有问题
-        return -1;
-    }
-
 
     async function decryptWithShuffle(pixels, width, height) {
         console.log("执行解密 (无损方案)...");
@@ -503,11 +475,6 @@ if ('serviceWorker' in navigator) {
         }
     });
 
-    function isMobileDevice() {
-        // 一个简单但相当有效的正则表达式来检测移动设备
-        return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    }
-
     // [新增] 用于下载单个文件的辅助函数
     function downloadFile(blob, fileName) {
         const link = document.createElement('a');
@@ -598,8 +565,11 @@ if ('serviceWorker' in navigator) {
         statusContainer.innerHTML = '';
 
         if (status === 'success' && blob) {
+            // 为 blob 创建一个可访问的 URL
+            const imageUrl = URL.createObjectURL(blob);
+
             const img = document.createElement('img');
-            img.src = URL.createObjectURL(blob);
+            img.src = imageUrl;
             thumbnailContainer.appendChild(img);
 
             const statusBadge = document.createElement('span');
@@ -607,37 +577,27 @@ if ('serviceWorker' in navigator) {
             statusBadge.textContent = message;
             statusContainer.appendChild(statusBadge);
 
+            // --- 功能改进 ---
+            // 1. 给卡片添加一个 'clickable' 类，以便用 CSS 设置样式
+            card.classList.add('clickable');
+
+            // 2. 给整个卡片添加点击事件监听器
+            card.addEventListener('click', () => {
+                // 在新的标签页中打开图片 URL
+                window.open(imageUrl, '_blank');
+            });
+            // --- 结束改进 ---
+
         } else if (status === 'error') {
             thumbnailContainer.textContent = '❌';
             const statusBadge = document.createElement('span');
             statusBadge.className = 'status error';
             statusBadge.textContent = message;
             statusContainer.appendChild(statusBadge);
+
+            // 确保处理失败的卡片没有 clickable 样式和事件
+            card.classList.remove('clickable');
         }
-    }
-
-    async function downloadAllAsZip() {
-        if (processedFiles.length === 0) return;
-
-        const zip = new JSZip();
-
-        processedFiles.forEach(file => {
-            zip.file(file.name, file.blob);
-        });
-
-        const zipBlob = await zip.generateAsync({
-            type: "blob",
-            compression: "DEFLATE",
-            compressionOptions: {level: 9}
-        });
-
-        const link = document.createElement('a');
-        link.href = URL.createObjectURL(zipBlob);
-        link.download = `processed-images-${Date.now()}.zip`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(link.href);
     }
 
     // [新函数] 智能下载处理器
@@ -648,8 +608,6 @@ if ('serviceWorker' in navigator) {
         downloadButton.disabled = true;
         //if (isMobileDevice()) {
         if (true) {
-            // --- 手机端：打包为 ZIP 下载 ---
-            console.log("检测到移动设备，打包为 ZIP 下载。");
             const zip = new JSZip();
 
             processedFiles.forEach(file => {
