@@ -1,34 +1,46 @@
 // script.js (Cleaned Version)
-let wasmApi = null;
+// 在 script.js 的顶部
 
-// 使用刚才指定的导出名来加载模块
+let wasmApi = null; // 初始化为 null
+
+// 页面加载时就禁用按钮，直到 WASM 准备就绪
+document.addEventListener('DOMContentLoaded', (event) => {
+    const uploadButton = document.getElementById('uploadButton');
+    if (uploadButton) uploadButton.disabled = true;
+});
+
+
 createImageProcessorModule().then(Module => {
     console.log("WASM 模块已成功加载并初始化。");
 
-    // 使用 cwrap 包装 C 函数，使其类型安全且易于调用
-    // 格式: cwrap('c_function_name', 'return_type', ['arg_type_1', 'arg_type_2', ...])
-    // 'number' 代表指针(内存地址)或整数
+    // ------------------- 这是“创建者”的正确代码 -------------------
+    // 我们创建的 wasmApi 对象，必须包含完整的 Module 对象。
     wasmApi = {
+        Module: Module, // 关键：存储整个 Module 对象
         perform_encryption: Module.cwrap(
-            'perform_encryption',
-            null, // void 返回类型
-            ['number', 'number', 'number', 'number', 'number', 'number', 'number', 'number']
+            'perform_encryption', null, ['number', 'number', 'number', 'number', 'number', 'number', 'number', 'number']
         ),
         perform_decryption: Module.cwrap(
-            'perform_decryption',
-            null, // void 返回类型
-            ['number', 'number', 'number', 'number', 'number', 'number', 'number', 'number']
-        ),
-        // 保存 Module 实例以用于内存操作
-        _malloc: Module._malloc,
-        _free: Module._free,
-        HEAPU8: Module.HEAPU8,
-        HEAPU32: Module.HEAPU32
+            'perform_decryption', null, ['number', 'number', 'number', 'number', 'number', 'number', 'number', 'number']
+        )
     };
+    // -----------------------------------------------------------------
 
-    // 你可以在这里启用UI元素，表明应用已准备就绪
-    document.getElementById('uploadButton').disabled = false;
+    // WASM 准备就绪，现在可以启用上传按钮了
+    const uploadButton = document.getElementById('uploadButton');
+    if (uploadButton) uploadButton.disabled = false;
+    console.log("WASM API 已准备就绪。");
+
+}).catch(err => {
+    // 增加一个 catch 来处理模块加载失败的情况
+    console.error("WASM 模块加载失败:", err);
+    // 可以在UI上显示错误信息
+    const resultsGrid = document.getElementById('results');
+    if (resultsGrid) {
+        resultsGrid.innerHTML = `<p class="status error">核心加密模块加载失败，请刷新页面重试。</p>`;
+    }
 });
+
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
         navigator.serviceWorker.register('/sw.js')
@@ -350,13 +362,15 @@ if ('serviceWorker' in navigator) {
      * @param {number} height 加密图像的高度。
      * @returns {Promise<ArrayBuffer>} 一个包含解密后 PNG 文件数据的 ArrayBuffer。
      */
-    async function decryptWithShuffle(pixels, width, height) {
+    async function decryptWithShuffle(wasmApi, pixels, width, height) {
         // 步骤 1: 检查 WASM 模块是否已加载并准备就绪
         if (!wasmApi) {
             // 如果 wasmApi 为 null，说明模块还没加载好，无法继续。
             // 这是必要的安全检查。
             throw new Error("WASM 模块尚未准备好，请稍后再试。");
         }
+
+        const {Module, perform_decryption} = wasmApi;
 
         console.log("执行解密 (WASM 优化方案)...");
 
@@ -399,9 +413,9 @@ if ('serviceWorker' in navigator) {
             const shuffleMapSize = shuffleMap.length * 4; // Uint32Array，每个元素4字节
             const decryptedPixelsSize = originalWidth * originalHeight * CHANNELS;
 
-            encryptedPixelsPtr = wasmApi._malloc(encryptedPixelsSize);
-            shuffleMapPtr = wasmApi._malloc(shuffleMapSize);
-            decryptedPixelsPtr = wasmApi._malloc(decryptedPixelsSize);
+            encryptedPixelsPtr = Module._malloc(encryptedPixelsSize);
+            shuffleMapPtr = Module._malloc(shuffleMapSize);
+            decryptedPixelsPtr = Module._malloc(decryptedPixelsSize);
 
             // 如果内存分配失败 (例如，图片太大导致内存不足)，_malloc 会返回 0
             if (!encryptedPixelsPtr || !shuffleMapPtr || !decryptedPixelsPtr) {
@@ -410,13 +424,13 @@ if ('serviceWorker' in navigator) {
 
             // 步骤 5: 将 JavaScript 中的数据复制到 WASM 的内存中
             // 使用 HEAPU8 (Uint8Array 视图) 和 HEAPU32 (Uint32Array 视图) 进行高效复制。
-            wasmApi.HEAPU8.set(pixels, encryptedPixelsPtr);
+            Module.HEAPU8.set(pixels, encryptedPixelsPtr);
             // 注意: HEAPU32 的偏移量需要除以4，因为它操作的是4字节整数。
-            wasmApi.HEAPU32.set(new Uint32Array(shuffleMap), shuffleMapPtr / 4);
+            Module.HEAPU32.set(new Uint32Array(shuffleMap), shuffleMapPtr / 4);
 
             // 步骤 6: 调用导出的 C 函数 `perform_decryption`
             // 所有参数都以数字形式传递（包括指针，它本质上是内存地址的数字表示）。
-            wasmApi.perform_decryption(
+            Module.perform_decryption(
                 encryptedPixelsPtr,           // const unsigned char* restrict encrypted_pixels
                 width,                        // int width
                 height,                       // int height
@@ -429,7 +443,7 @@ if ('serviceWorker' in navigator) {
 
             // 步骤 7: 从 WASM 内存中将解密结果复制回 JavaScript
             // 创建一个指向 WASM 内存中结果区域的视图
-            const wasmResultView = new Uint8Array(wasmApi.HEAPU8.buffer, decryptedPixelsPtr, decryptedPixelsSize);
+            const wasmResultView = new Uint8Array(Module.HEAPU8.buffer, decryptedPixelsPtr, decryptedPixelsSize);
 
             // **至关重要**: 创建一个数据的 JavaScript 副本。
             // 因为 WASM 内存很快就会被释放，我们不能持有对它的引用。
@@ -444,9 +458,9 @@ if ('serviceWorker' in navigator) {
         } finally {
             // 步骤 9: 无论成功与否，都必须释放 WASM 内存以避免内存泄漏
             // 使用 try...finally 结构确保即使在发生错误时也能执行清理。
-            if (encryptedPixelsPtr) wasmApi._free(encryptedPixelsPtr);
-            if (shuffleMapPtr) wasmApi._free(shuffleMapPtr);
-            if (decryptedPixelsPtr) wasmApi._free(decryptedPixelsPtr);
+            if (encryptedPixelsPtr) Module._free(encryptedPixelsPtr);
+            if (shuffleMapPtr) Module._free(shuffleMapPtr);
+            if (decryptedPixelsPtr) Module._free(decryptedPixelsPtr);
             console.log("WASM 内存已释放。");
         }
     }
@@ -473,7 +487,7 @@ if ('serviceWorker' in navigator) {
 
                     if (isAlreadyEncrypted) {
                         // 如果检测到 magic row，使用新的 shuffle 解密器
-                        outputPngBuffer = await decryptWithShuffle(pixels, width, height);
+                        outputPngBuffer = await decryptWithShuffle(wasmApi, pixels, width, height);
                     } else {
                         // 否则，使用新的 shuffle 加密器
                         outputPngBuffer = await encryptWithShuffle(wasmApi, pixels, width, height);
