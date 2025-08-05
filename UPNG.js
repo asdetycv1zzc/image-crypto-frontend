@@ -1429,7 +1429,7 @@ var UPNG = (function () {
         if (levelZero) opts = {level: 0};
 
 
-        var CMPR = (data.length > 10e6 && window.UZIP != null) ? window.UZIP : pako;
+        var CMPR = pako;
 
         var time = Date.now();
         for (var i = 0; i < ftry.length; i++) {
