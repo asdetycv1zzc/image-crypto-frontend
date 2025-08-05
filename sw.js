@@ -1,6 +1,6 @@
 // sw.js
 
-const CACHE_NAME = 'image-encryptor-v2';
+const CACHE_NAME = 'image-encryptor-v3';
 
 // 需要缓存的完整文件列表，包括所有 HTML、CSS、JS 和第三方库
 const URLS_TO_CACHE = [
@@ -17,7 +17,6 @@ const URLS_TO_CACHE = [
     "image_processor.js",
     "image_processor.wasm",
     "crypto-worker.js",
-    "util.js",
     // --- 您将在下一步创建的图标 ---
     'icons/icon-192x192.png',
     'icons/icon-512x512.png'
