@@ -430,7 +430,7 @@ if ('serviceWorker' in navigator) {
 
             // 步骤 6: 调用导出的 C 函数 `perform_decryption`
             // 所有参数都以数字形式传递（包括指针，它本质上是内存地址的数字表示）。
-            Module.perform_decryption(
+            perform_decryption(
                 encryptedPixelsPtr,           // const unsigned char* restrict encrypted_pixels
                 width,                        // int width
                 height,                       // int height
