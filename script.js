@@ -239,62 +239,6 @@ if ('serviceWorker' in navigator) {
         }
     }
 
-    /**
-     * 将一个块从源数据复制到目标数据，能安全处理边缘不完整的块。
-     * @param {Uint8Array} src - 源像素数据 (完整缓冲区).
-     * @param {number} srcWidth - 源图像的完整宽度.
-     * @param {number} srcHeight - 源图像内容区域的高度.
-     * @param {number} srcStartRow - 源内容在缓冲区中的起始行.
-     * @param {Uint8Array} dest - 目标像素数据 (完整缓冲区).
-     * @param {number} destWidth - 目标图像的完整宽度.
-     * @param {number} destHeight - 目标内容区域的高度.
-     * @param {number} destStartRow - 目标内容在缓冲区中的起始行.
-     * @param {number} destBlockX - 目标位置块的 X 坐标.
-     * @param {number} destBlockY - 目标位置块的 Y 坐标.
-     * @param {number} srcBlockX - 源位置块的 X 坐标.
-     * @param {number} srcBlockY - 源位置块的 Y 坐标.
-     */
-    function copyBlock(src, srcWidth, srcHeight, srcStartRow, dest, destWidth, destHeight, destStartRow, destBlockX, destBlockY, srcBlockX, srcBlockY) {
-        const srcStartX = srcBlockX * BLOCK_SIZE;
-        const srcStartY = srcBlockY * BLOCK_SIZE;
-        const destStartX = destBlockX * BLOCK_SIZE;
-        const destStartY = destBlockY * BLOCK_SIZE;
-
-        // --- 核心改动：分别计算源和目标的有效尺寸 ---
-        const effectiveBlockWidth = Math.min(BLOCK_SIZE, srcWidth - srcStartX);
-        const effectiveBlockHeight = Math.min(BLOCK_SIZE, srcHeight - srcStartY);
-
-        // 确保目标块的Y坐标没有超出目标区域的高度
-        if (destStartY >= destHeight) {
-            return; // 这个块在目标区域之外，直接跳过
-        }
-
-        for (let y = 0; y < effectiveBlockHeight; y++) {
-            // 检查当前行是否会超出源或目标的高度限制
-            if ((srcStartY + y >= srcHeight) || (destStartY + y >= destHeight)) {
-                continue;
-            }
-
-            const srcFinalRow = srcStartY + y + srcStartRow;
-            const destFinalRow = destStartY + y + destStartRow;
-
-            const srcOffset = (srcFinalRow * srcWidth + srcStartX) * CHANNELS;
-            const destOffset = (destFinalRow * destWidth + destStartX) * CHANNELS;
-
-            const bytesToCopy = effectiveBlockWidth * CHANNELS;
-
-            // --- 最后的防线：在 .set() 之前进行最终检查 ---
-            if (destOffset + bytesToCopy > dest.length) {
-                console.error(`越界错误预防：试图写入到 ${destOffset + bytesToCopy}，但缓冲区长度为 ${dest.length}。`);
-                continue; // 跳过这个写入操作
-            }
-
-            const rowData = src.subarray(srcOffset, srcOffset + bytesToCopy);
-            dest.set(rowData, destOffset);
-        }
-    }
-
-
     async function encryptWithShuffle(pixels, width, height) {
         if (!wasmApi) {
             throw new Error("WASM 模块尚未准备好，请稍后再试。");
