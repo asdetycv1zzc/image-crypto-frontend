@@ -2,10 +2,40 @@
 
 // 引入Emscripten生成的JS胶水文件，这是让每个worker加载WASM最简单的方式
 importScripts("pako.min.js");
-importScripts('UPNG.js');
-importScripts('bmp-decoder.js');
-importScripts('jpeg-decoder.js');
-importScripts('image_processor.js');
+
+try {
+    // 1. 引入所有脚本。将它们放在一个 try...catch 块中。
+    // 把最可疑的放在前面。
+    importScripts('jpeg-decoder.js', 'UPNG.js', 'bmp-decoder.js', 'image_processor.js');
+
+    // 2. 立即进行断言式检查
+    console.log("Worker: importScripts 执行完毕。开始检查依赖...");
+
+    if (typeof jpeg === 'undefined') {
+        console.error("Worker: 依赖检查失败 - 'jpeg' 未定义！");
+        throw new Error("jpeg-decoder.js未能正确加载或初始化。");
+    }
+    if (typeof UPNG === 'undefined') {
+        console.error("Worker: 依赖检查失败 - 'UPNG' 未定义！");
+        throw new Error("upng.min.js未能正确加载或初始化。");
+    }
+    if (typeof BmpDecoder === 'undefined') {
+        console.error("Worker: 依赖检查失败 - 'BmpDecoder' 未定义！");
+        throw new Error("bmp-decoder.min.js未能正确加载或初始化。");
+    }
+    if (typeof createImageProcessorModule === 'undefined') {
+        console.error("Worker: 依赖检查失败 - 'createImageProcessorModule' 未定义！");
+        throw new Error("image_processor.js未能正确加载或初始化。");
+    }
+
+    console.log("Worker: 所有依赖项均已成功加载！");
+
+} catch (e) {
+    // 如果 importScripts 本身失败（例如404），这里会捕获到错误
+    console.error("Worker: importScripts 失败:", e);
+    // 向主线程报告一个致命的初始化错误
+    self.postMessage({ status: 'init_error', error: e.message });
+}
 
 let wasmApi = null;
 
