@@ -57,61 +57,91 @@ unsigned char* decode_image_wasm(
 typedef struct {
     unsigned char* buffer;
     size_t size;
+    size_t capacity; // 记录已分配内存的总大小
 } WriteContext;
 
 // 这是传递给 stbi_write_png_to_func 的回调函数
 // stb 会一块一块地调用这个函数，把编码好的PNG数据传给我们
-static inline void write_func_callback(void* context, void* data, int size) {
+static void write_func_callback(void* context, void* data, int size) {
     WriteContext* ctx = (WriteContext*)context;
 
-    // 重新分配内存以容纳新的数据块
-    // 注意：在实际生产中，更高效的做法是预分配一个大块或指数增长，
-    // 但 realloc 对于这里的简单性来说足够了。
-    ctx->buffer = (unsigned char*)realloc(ctx->buffer, ctx->size + size);
-    if (ctx->buffer == NULL) {
-        // 内存分配失败处理
-        return;
+    // 检查是否有足够容量，理论上预分配后不应该需要realloc
+    if (ctx->size + size > ctx->capacity) {
+        // 这是一个备用方案，以防预分配的内存不足。
+        // 在实践中，如果预分配大小合理，这里几乎不会被执行。
+        size_t new_capacity = (ctx->size + size) * 1.5; // 指数增长
+        ctx->buffer = (unsigned char*)realloc(ctx->buffer, new_capacity);
+        ctx->capacity = new_capacity;
     }
 
+    // 断言，确保我们不会写入越界
+    assert(ctx->buffer != NULL && "Memory allocation failed");
+    assert(ctx->size + size <= ctx->capacity && "Write exceeds allocated capacity");
+
     // 将新的数据块拷贝到我们缓冲区的末尾
-    memcpy_simd(ctx->buffer + ctx->size, data, size);
+    memcpy(ctx->buffer + ctx->size, data, size);
     ctx->size += size;
 }
 
 // 这个函数将从JavaScript中被调用，用来编码PNG图片
 EMSCRIPTEN_KEEPALIVE
 unsigned char* encode_png_wasm(
-    const unsigned char* image_data, // [输入] 原始的 RGBA 像素数据
-    int width,                       // [输入] 图片宽度
-    int height,                      // [输入] 图片高度
-    size_t* out_size                 // [输出] 用于返回最终PNG文件大小的指针
+    const unsigned char* image_data,
+    int width,
+    int height,
+    size_t* out_size
 ) {
+    // 优化1: 预分配一个足够大的缓冲区。
+    // 最坏情况是无压缩，RGBA大小为 width * height * 4。我们分配这个大小。
+    // PNG通常会压缩得更小，所以这个大小绰绰有余。
+    size_t initial_capacity = (size_t)width * height * 4 * 2;
+    unsigned char* initial_buffer = (unsigned char*)malloc(initial_capacity);
+
+    if (initial_buffer == NULL) {
+        *out_size = 0;
+        return NULL;
+    }
+
     // 1. 初始化我们的写入上下文
-    WriteContext ctx = { .buffer = NULL, .size = 0 };
+    WriteContext ctx = {
+        .buffer = initial_buffer,
+        .size = 0,
+        .capacity = initial_capacity
+    };
 
     // 2. 调用stb_image_write的核心函数
-    // 它会进行PNG编码，并通过回调函数(write_func_callback)把数据交给我们
-    // 最后一个参数 0 表示默认的PNG压缩级别
     int success = stbi_write_png_to_func(
         write_func_callback,
-        &ctx,                  // 传递我们的上下文
+        &ctx,
         width,
         height,
-        4,                     // 4个通道 (RGBA)
+        4,
         image_data,
-        width * 4              // 每行的字节数 (stride)
+        width * 4
     );
 
     if (!success) {
-        // 如果编码失败，释放可能已分配的内存
         if (ctx.buffer) free(ctx.buffer);
         *out_size = 0;
         return NULL;
     }
 
+    // 优化2: 单次收缩内存。
+    // 编码完成后，我们知道确切的大小 (ctx.size)。
+    // 调用一次 realloc 将缓冲区收缩到正好大小，避免浪费内存。
+    // 这比在循环中多次调用realloc快得多。
+    unsigned char* final_buffer = (unsigned char*)realloc(ctx.buffer, ctx.size);
+    if (final_buffer == NULL && ctx.size > 0) {
+        // realloc失败，但旧缓冲区仍然有效
+        // 这种情况非常罕见，但为了代码健壮性我们返回旧缓冲区
+        *out_size = ctx.capacity; // JS侧需要知道这是未收缩的缓冲区
+        return ctx.buffer;
+    }
+
+
     // 3. 将最终大小写回输出参数
     *out_size = ctx.size;
 
     // 4. 返回指向我们自己分配和填充的内存的指针
-    return ctx.buffer;
+    return final_buffer;
 }
