@@ -371,60 +371,91 @@ if ('serviceWorker' in navigator) {
     // [新函数] 智能下载处理器
     async function handleDownload() {
         if (processedFiles.length === 0) return;
+        downloadButton.disabled = true;
 
+        // --- 1. 定义模拟参数 ---
+        const ESTIMATED_SPEED_MB_PER_SEC = 15; // MB/s，根据您的观察设定，可以调整
+
+        // --- 2. 获取并重置UI元素 ---
         const progressWrapper = document.getElementById('progress-wrapper');
         const progressBar = document.getElementById('zip-progress');
         const progressText = document.getElementById('progress-percentage');
+
         progressWrapper.style.display = 'block';
         progressBar.style.width = '0%';
         progressText.textContent = '0%';
 
-        // 禁用按钮防止重复点击
-        downloadButton.disabled = true;
+        let progressInterval = null; // 用于存放我们的计时器ID
+
         try {
-            //console.log("并行读取所有文件到 ArrayBuffer...");
-            const readPromises = processedFiles.map(async (file) => {
-                const buffer = await file.blob.arrayBuffer();
-                return [file.name, new Uint8Array(buffer)];
+            // --- 3. 并行读取文件并计算总大小 ---
+            console.log("并行读取所有文件并计算总大小...");
+            const readPromises = processedFiles.map(file => file.blob.arrayBuffer());
+            const buffers = await Promise.all(readPromises);
+
+            const dataToZip = {};
+            let totalSizeInBytes = 0;
+            processedFiles.forEach((file, index) => {
+                const buffer = buffers[index];
+                dataToZip[file.name] = new Uint8Array(buffer);
+                totalSizeInBytes += buffer.byteLength;
             });
-            const fileEntries = await Promise.all(readPromises);
-            const dataToZip = Object.fromEntries(fileEntries);
 
+            // --- 4. 启动真正的后台压缩任务 ---
             const zipPromise = new Promise((resolve, reject) => {
-                const opts = {
-                    level: 6, // 速度和压缩率的平衡点
-                    onprogress(progress) {
-                        const percentage = Math.round((progress.loaded / progress.total) * 100);
-                        // 3. 更新进度条的宽度和百分比文本
-                        progressBar.style.width = percentage + '%';
-                        progressText.textContent = percentage + '%';
-                    }
-                };
-
-                fflate.zip(dataToZip, opts, (err, data) => {
+                fflate.zip(dataToZip, { level: 6 }, (err, data) => {
                     if (err) reject(err);
                     else resolve(data);
                 });
             });
 
+            // --- 5. 根据总大小和速度，启动模拟进度条 ---
+            const totalSizeInMB = totalSizeInBytes / (1024 * 1024);
+            const estimatedDurationInMs = (totalSizeInMB / ESTIMATED_SPEED_MB_PER_SEC) * 1000;
+            const startTime = Date.now();
+
+            progressInterval = setInterval(() => {
+                const elapsedTime = Date.now() - startTime;
+                let currentProgress = Math.min((elapsedTime / estimatedDurationInMs) * 100, 99);
+                currentProgress = Math.floor(currentProgress); // 取整
+
+                progressBar.style.width = currentProgress + '%';
+                progressText.textContent = currentProgress + '%';
+
+                if (elapsedTime >= estimatedDurationInMs) {
+                    clearInterval(progressInterval); // 预估时间到，停止更新
+                }
+            }, 200); // 每200毫秒更新一次UI
+
+            // --- 6. 等待真正的压缩任务完成 ---
             const zipData = await zipPromise;
-            const zipBlob = new Blob([zipData], {type: 'application/zip'});
-            downloadFile(zipBlob, `processed-images-${Date.now()}.zip`);
+
+            // --- 7. 任务完成，清理并显示最终结果 ---
+            clearInterval(progressInterval); // 确保计时器被清除
+            progressBar.style.transition = 'width 0.5s ease-in-out'; // 给最后一步一个更明显的动画
+            progressBar.style.width = '100%';
+            progressText.textContent = '100%';
+
+            const zipBlob = new Blob([zipData], { type: 'application/zip' });
+
+            // 稍微延迟一下再下载，让用户看到100%的状态
+            setTimeout(() => {
+                downloadFile(zipBlob, `processed-images-${Date.now()}.zip`);
+            }, 500);
 
         } catch (error) {
-            console.error("fflate 异步压缩失败:", error);
+            console.error("fflate 异步压缩或模拟进度失败:", error);
             alert("打包下载失败！");
         } finally {
-            // 4. 完成或失败后，重新启用按钮并隐藏进度条
-            downloadButton.disabled = false;
-            progressWrapper.style.display = 'none';
+            // 确保无论成功或失败，都能清理和重置UI
+            clearInterval(progressInterval);
+            // 稍微延迟一下再隐藏，避免100%一闪而过
+            setTimeout(() => {
+                downloadButton.disabled = false;
+                progressWrapper.style.display = 'none';
+                progressBar.style.transition = 'width 0.2s ease-out'; // 恢复默认过渡
+            }, 500);
         }
-
-        // 重新启用按钮
-        // 为了避免用户在多文件下载完成前再次点击，可以设置一个更长的延迟
-        setTimeout(() => {
-            downloadButton.disabled = false;
-        }, processedFiles.length * 300 + 500);
     }
 })();
 
