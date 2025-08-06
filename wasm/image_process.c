@@ -75,13 +75,12 @@ void perform_encryption(
 }
 
 /*
- * C 版本的解密核心逻辑 (激进优化版)
- * 优化点: (同加密函数)
- * 1. restrict: 保证指针不重叠，为编译器优化铺路。
- * 2. const: 标记只读数据。
- *
- * 对应的 JavaScript 代码 (decryptWithShuffle 函数的核心循环):
- * for (let i = 0; i < totalBlocks; i++) { ... copyBlock(...) ... }
+ * C 版本的解密核心逻辑 (修正版)
+ * 修正点:
+ * 1. (关键修复) 在解密循环开始前，完整复制整个加密图像到输出缓冲区。
+ *    这确保了在加密过程中未被触及的像素（如图像底部）被正确地保留下来。
+ * 2. restrict: 保证指针不重叠，为编译器优化铺路。
+ * 3. const: 标记只读数据。
  */
 EMSCRIPTEN_KEEPALIVE
 void perform_decryption(
@@ -95,13 +94,17 @@ void perform_decryption(
     const int blocksX = content_width / BLOCK_SIZE;
     const int blocksY = content_height / BLOCK_SIZE;
 
-    // 步骤1: 完整复制加密图像的内容部分。
-    const unsigned char* encrypted_content_start = encrypted_pixels + (size_t)encrypted_content_start_row * width * CHANNELS;
-    const size_t content_image_size = (size_t)width * content_height * CHANNELS;
-    memcpy(decrypted_pixels, encrypted_content_start, content_image_size);
+    // 步骤 1: 完整复制整个加密图像到解密缓冲区。 (*** 此处为关键修正 ***)
+    // 这一步确保了图像中所有未被加密算法触及的部分 (例如底部边缘)
+    // 能够被原样保留到最终的解密图像中。
+    const size_t full_image_size = (size_t)width * height * CHANNELS;
+    memcpy(decrypted_pixels, encrypted_pixels, full_image_size);
 
-    // 步骤2: 根据 shuffle map 将块从源（加密数据）还原到目标（解密画布）的正确位置。
-    // 使用嵌套循环消除 div/mod
+    // 定义一个指向加密内容区域起点的指针，用于后续读取源数据块。
+    const unsigned char* encrypted_content_start = encrypted_pixels + (size_t)encrypted_content_start_row * width * CHANNELS;
+
+    // 步骤 2: 根据 shuffle map 将块从源（加密数据）还原到目标（解密画布）的正确位置。
+    // 这个循环现在是在一个已经包含完整图像数据的副本上进行“覆盖”操作。
     int shuffle_map_idx = 0;
     for (int srcBlockY = 0; srcBlockY < blocksY; ++srcBlockY) {
         for (int srcBlockX = 0; srcBlockX < blocksX; ++srcBlockX) {
@@ -131,7 +134,9 @@ void perform_decryption(
                 if (destStartY + y >= content_height) {
                     continue;
                 }
+                // 从加密图像的内容区域读取源数据
                 const unsigned char* src_ptr = encrypted_content_start + ((size_t)(srcStartY + y) * width + srcStartX) * CHANNELS;
+                // 将数据写入到我们已经创建了完整副本的解密缓冲区
                 unsigned char* dest_ptr = decrypted_pixels + ((size_t)(destStartY + y) * width + destStartX) * CHANNELS;
 
                 memcpy(dest_ptr, src_ptr, bytesToCopy);
