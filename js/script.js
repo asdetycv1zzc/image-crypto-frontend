@@ -403,7 +403,7 @@ if ('serviceWorker' in navigator) {
 
             // --- 4. 启动真正的后台压缩任务 ---
             const zipPromise = new Promise((resolve, reject) => {
-                fflate.zip(dataToZip, { level: 6 }, (err, data) => {
+                fflate.zip(dataToZip, { level: 1 }, (err, data) => {
                     if (err) reject(err);
                     else resolve(data);
                 });
