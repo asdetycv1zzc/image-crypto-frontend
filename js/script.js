@@ -376,18 +376,18 @@ if ('serviceWorker' in navigator) {
         downloadButton.disabled = true;
         //if (isMobileDevice()) {
         if (true) {
-            const zip = new JSZip();
+            const dataToZip = {};
+            for (const file of processedFiles) {
+                // 将 Blob 转为 fflate 需要的 Uint8Array
+                dataToZip[file.name] = new Uint8Array(await file.blob.arrayBuffer());
+            }
 
-            processedFiles.forEach(file => {
-                zip.file(file.name, file.blob);
+            const zipData = fflate.zipSync(dataToZip, {
+                level: 1 // 推荐等级。9是最慢的，1是最快的。
             });
 
             try {
-                const zipBlob = await zip.generateAsync({
-                    type: "blob",
-                    compression: "DEFLATE",
-                    compressionOptions: {level: 9}
-                });
+                const zipBlob = new Blob([zipData], { type: 'application/zip' });
                 downloadFile(zipBlob, `processed-images-${Date.now()}.zip`);
             } catch (error) {
                 console.error("ZIP 文件生成失败:", error);
