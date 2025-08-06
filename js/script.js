@@ -159,40 +159,70 @@ if ('serviceWorker' in navigator) {
         return supportedExtensions.some(ext => fileName.toLowerCase().endsWith(ext));
     }
 
-    async function expandAndFilterFile(file) {
-        // 如果文件本身不是 ZIP，但却是支持的图片，直接返回包含它自己的数组
+    /**
+     * 使用 fflate 异步解压 ZIP 文件或直接处理支持的图片。
+     * 这个函数会返回一个 Promise，以便与 async/await 流程无缝集成。
+     * @param {File} file - 用户上传的单个文件。
+     * @returns {Promise<File[]>} - 一个 Promise，最终会解析为一个包含所有图片文件的数组。
+     */
+    function expandAndFilterFile(file) {
+        // 1. 如果文件本身就是支持的图片，直接将其包装在数组中返回。
         if (isSupportedImage(file.name)) {
-            return [file];
+            return Promise.resolve([file]);
         }
 
-        // 如果文件是 ZIP，则尝试解压并提取所有支持的图片
-        if (file.name.toLowerCase().endsWith('.zip')) {
-            console.log(`检测到 ZIP 文件: ${file.name}，开始解压...`);
-            const zip = await JSZip.loadAsync(file);
-            const imageFilePromises = [];
-
-            zip.forEach((relativePath, zipEntry) => {
-                // 忽略文件夹，只处理文件
-                if (!zipEntry.dir && isSupportedImage(zipEntry.name)) {
-                    console.log(`在 ZIP 中找到图片: ${relativePath}`);
-                    // 异步提取文件内容为 Blob
-                    const promise = zipEntry.async('blob').then(blob => {
-                        // 将 Blob 重新包装成一个 File 对象，保留其原始路径作为新文件名
-                        // 这样即使用户上传了多个包含同名文件的 ZIP，我们也能区分
-                        const newFileName = `${file.name}/${relativePath}`;
-                        return new File([blob], newFileName, {type: blob.type});
-                    });
-                    imageFilePromises.push(promise);
-                }
-            });
-
-            // 等待所有图片文件都提取完毕
-            return Promise.all(imageFilePromises);
+        // 2. 如果不是 ZIP 文件，则跳过。
+        if (!file.name.toLowerCase().endsWith('.zip')) {
+            console.log(`跳过不支持的文件类型: ${file.name}`);
+            return Promise.resolve([]);
         }
 
-        // 如果文件既不是支持的图片，也不是 ZIP，返回空数组表示跳过
-        console.log(`跳过不支持的文件类型: ${file.name}`);
-        return [];
+        // 3. 对于 ZIP 文件，返回一个包裹了 fflate 异步操作的 Promise。
+        return new Promise(async (resolve, reject) => {
+            console.log(`检测到 ZIP 文件: ${file.name}，使用 fflate 异步解压...`);
+
+            try {
+                // 首先，将文件读取为 fflate 需要的 Uint8Array 格式。
+                // 这个操作本身是异步的，所以 Promise 的执行器需要标记为 async。
+                const buffer = await file.arrayBuffer();
+                const u8 = new Uint8Array(buffer);
+
+                // 调用 fflate.unzip。这是一个异步函数，它接受一个回调。
+                // 它会在内部启动 Worker，执行解压，完成后调用我们的回调。
+                fflate.unzip(u8, (err, unzipped) => {
+                    // a. 如果解压过程出错，则 reject Promise。
+                    if (err) {
+                        console.error(`fflate 异步解压文件 ${file.name} 失败:`, err);
+                        return reject(err);
+                    }
+
+                    // b. 如果解压成功，处理解压后的数据。
+                    const imageFiles = [];
+                    // 遍历解压出的所有文件条目
+                    for (const relativePath in unzipped) {
+                        // 确保是支持的图片，并且不是一个空目录
+                        if (isSupportedImage(relativePath) && unzipped[relativePath].length > 0) {
+                            const fileData = unzipped[relativePath]; // 这是 Uint8Array 数据
+                            const newFileName = `${file.name}/${relativePath}`; // 创建唯一文件名
+
+                            // 从解压出的数据创建新的 File 对象
+                            const imageFile = new File([fileData], newFileName, {
+                                // 尝试从扩展名推断 MIME 类型
+                                type: `image/${relativePath.split('.').pop().toLowerCase()}`
+                            });
+                            imageFiles.push(imageFile);
+                        }
+                    }
+
+                    console.log(`在 ${file.name} 中找到 ${imageFiles.length} 个图片文件。`);
+                    // c. 用包含所有图片文件的数组来 resolve Promise。
+                    resolve(imageFiles);
+                });
+            } catch (e) {
+                // 这个 catch 主要捕获 file.arrayBuffer() 可能发生的错误。
+                reject(e);
+            }
+        });
     }
 
 
@@ -403,7 +433,7 @@ if ('serviceWorker' in navigator) {
 
             // --- 4. 启动真正的后台压缩任务 ---
             const zipPromise = new Promise((resolve, reject) => {
-                fflate.zip(dataToZip, { level: 1 }, (err, data) => {
+                fflate.zip(dataToZip, {level: 1}, (err, data) => {
                     if (err) reject(err);
                     else resolve(data);
                 });
@@ -436,7 +466,7 @@ if ('serviceWorker' in navigator) {
             progressBar.style.width = '100%';
             progressText.textContent = '100%';
 
-            const zipBlob = new Blob([zipData], { type: 'application/zip' });
+            const zipBlob = new Blob([zipData], {type: 'application/zip'});
 
             // 稍微延迟一下再下载，让用户看到100%的状态
             setTimeout(() => {
