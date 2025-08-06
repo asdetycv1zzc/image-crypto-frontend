@@ -74,13 +74,14 @@ void perform_encryption(
     }
 }
 
-/*
- * C 版本的解密核心逻辑 (修正版)
+/**
+ * C 版本的解密核心逻辑 (最终修正版 - 无需修改函数签名)
  * 修正点:
- * 1. (关键修复) 在解密循环开始前，完整复制整个加密图像到输出缓冲区。
- *    这确保了在加密过程中未被触及的像素（如图像底部）被正确地保留下来。
- * 2. restrict: 保证指针不重叠，为编译器优化铺路。
- * 3. const: 标记只读数据。
+ * 1. 在函数内部根据输入参数推导出原始图像的高度(originalHeight)，避免了修改函数签名。
+ * 2. 基于推导出的 originalHeight 执行一次安全、大小正确的 memcpy，将加密图像的
+ *    内容部分（包括未扰乱的底部行）复制到输出缓冲区，这既避免了内存溢出，
+ *    也正确地初始化了输出图像。
+ * 3. 保持了之前对 effectiveBlockHeight 的鲁棒性计算，以处理跨越 content_height 边界的图块。
  */
 EMSCRIPTEN_KEEPALIVE
 void perform_decryption(
@@ -94,11 +95,23 @@ void perform_decryption(
     const int blocksX = content_width / BLOCK_SIZE;
     const int blocksY = content_height / BLOCK_SIZE;
 
-    const size_t full_image_size = (size_t)width * height * CHANNELS;
-    memcpy(decrypted_pixels, encrypted_pixels, full_image_size);
+    // --- 步骤 1: 根据输入参数推导出原始图像的高度 ---
+    // 加密图像总高度(height) = 内容起始行 + 原始高度 + 1个magic行
+    // 因此: originalHeight = height - encrypted_content_start_row - 1
+    const int originalHeight = height - encrypted_content_start_row - 1;
 
+    // --- 步骤 2: 安全地初始化输出缓冲区 ---
+    // 定位到加密数据中实际图像内容的起始指针
     const unsigned char* encrypted_content_start = encrypted_pixels + (size_t)encrypted_content_start_row * width * CHANNELS;
+    // 计算原始图像内容的总字节大小
+    const size_t original_image_size = (size_t)width * originalHeight * CHANNELS;
 
+    // 将加密图像的内容部分完整复制到输出缓冲区。
+    // 这是安全的操作，因为 original_image_size 正好对应 decrypted_pixels 的分配大小。
+    memcpy(decrypted_pixels, encrypted_content_start, original_image_size);
+
+    // --- 步骤 3: 执行核心解密循环 ---
+    // 这个循环现在是在一个已正确初始化的、大小正确的缓冲区上进行覆盖操作。
     int shuffle_map_idx = 0;
     for (int srcBlockY = 0; srcBlockY < blocksY; ++srcBlockY) {
         for (int srcBlockX = 0; srcBlockX < blocksX; ++srcBlockX) {
@@ -113,25 +126,21 @@ void perform_decryption(
 
             const int effectiveBlockWidth = (srcStartX + BLOCK_SIZE > width) ? (width - srcStartX) : BLOCK_SIZE;
 
-            // --- 关键修正开始 ---
-            // 1. 计算源块的有效高度
+            // 同时考虑源和目标的边界，计算块的有效高度
             int src_h = (srcStartY + BLOCK_SIZE > content_height) ? (content_height - srcStartY) : BLOCK_SIZE;
-            // 2. 计算目标块的有效高度
             int dest_h = (destStartY + BLOCK_SIZE > content_height) ? (content_height - destStartY) : BLOCK_SIZE;
-            // 3. 最终要复制的高度是二者中的较小值
             int effectiveBlockHeight = (src_h < dest_h) ? src_h : dest_h;
 
-            // 如果有效高度小于等于0，则无需复制
             if (effectiveBlockHeight <= 0) {
                 continue;
             }
-            // --- 关键修正结束 ---
 
             const size_t bytesToCopy = (size_t)effectiveBlockWidth * CHANNELS;
 
             for (int y = 0; y < effectiveBlockHeight; ++y) {
-                // 由于 effectiveBlockHeight 已经保证了不会越界，内部的 `if` 检查可以安全移除
+                // 读取指针: 基于加密内容区的起点 `encrypted_content_start`
                 const unsigned char* src_ptr = encrypted_content_start + ((size_t)(srcStartY + y) * width + srcStartX) * CHANNELS;
+                // 写入指针: 基于输出缓冲区 `decrypted_pixels`
                 unsigned char* dest_ptr = decrypted_pixels + ((size_t)(destStartY + y) * width + destStartX) * CHANNELS;
 
                 memcpy(dest_ptr, src_ptr, bytesToCopy);
