@@ -374,7 +374,7 @@ if ('serviceWorker' in navigator) {
         downloadButton.disabled = true;
 
         // --- 1. 定义模拟参数 ---
-        const ESTIMATED_SPEED_MB_PER_SEC = 15; // MB/s，根据您的观察设定，可以调整
+        const ESTIMATED_SPEED_MB_PER_SEC = 100; // MB/s，根据您的观察设定，可以调整
 
         // --- 2. 获取并重置UI元素 ---
         const progressWrapper = document.getElementById('progress-wrapper');
