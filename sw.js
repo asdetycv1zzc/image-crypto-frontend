@@ -9,7 +9,7 @@ const URLS_TO_CACHE = [
     'style.css',
     'js/script.js',
     // --- 您的第三方库 ---
-    'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
+    "https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js",
     "js/image_processor.js",
     "js/image_processor.wasm",
     "js/crypto-worker.js",

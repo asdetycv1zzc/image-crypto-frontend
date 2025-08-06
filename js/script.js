@@ -159,40 +159,70 @@ if ('serviceWorker' in navigator) {
         return supportedExtensions.some(ext => fileName.toLowerCase().endsWith(ext));
     }
 
-    async function expandAndFilterFile(file) {
-        // 如果文件本身不是 ZIP，但却是支持的图片，直接返回包含它自己的数组
+    /**
+     * 使用 fflate 异步解压 ZIP 文件或直接处理支持的图片。
+     * 这个函数会返回一个 Promise，以便与 async/await 流程无缝集成。
+     * @param {File} file - 用户上传的单个文件。
+     * @returns {Promise<File[]>} - 一个 Promise，最终会解析为一个包含所有图片文件的数组。
+     */
+    function expandAndFilterFile(file) {
+        // 1. 如果文件本身就是支持的图片，直接将其包装在数组中返回。
         if (isSupportedImage(file.name)) {
-            return [file];
+            return Promise.resolve([file]);
         }
 
-        // 如果文件是 ZIP，则尝试解压并提取所有支持的图片
-        if (file.name.toLowerCase().endsWith('.zip')) {
-            console.log(`检测到 ZIP 文件: ${file.name}，开始解压...`);
-            const zip = await JSZip.loadAsync(file);
-            const imageFilePromises = [];
-
-            zip.forEach((relativePath, zipEntry) => {
-                // 忽略文件夹，只处理文件
-                if (!zipEntry.dir && isSupportedImage(zipEntry.name)) {
-                    console.log(`在 ZIP 中找到图片: ${relativePath}`);
-                    // 异步提取文件内容为 Blob
-                    const promise = zipEntry.async('blob').then(blob => {
-                        // 将 Blob 重新包装成一个 File 对象，保留其原始路径作为新文件名
-                        // 这样即使用户上传了多个包含同名文件的 ZIP，我们也能区分
-                        const newFileName = `${file.name}/${relativePath}`;
-                        return new File([blob], newFileName, {type: blob.type});
-                    });
-                    imageFilePromises.push(promise);
-                }
-            });
-
-            // 等待所有图片文件都提取完毕
-            return Promise.all(imageFilePromises);
+        // 2. 如果不是 ZIP 文件，则跳过。
+        if (!file.name.toLowerCase().endsWith('.zip')) {
+            console.log(`跳过不支持的文件类型: ${file.name}`);
+            return Promise.resolve([]);
         }
 
-        // 如果文件既不是支持的图片，也不是 ZIP，返回空数组表示跳过
-        console.log(`跳过不支持的文件类型: ${file.name}`);
-        return [];
+        // 3. 对于 ZIP 文件，返回一个包裹了 fflate 异步操作的 Promise。
+        return new Promise(async (resolve, reject) => {
+            console.log(`检测到 ZIP 文件: ${file.name}，使用 fflate 异步解压...`);
+
+            try {
+                // 首先，将文件读取为 fflate 需要的 Uint8Array 格式。
+                // 这个操作本身是异步的，所以 Promise 的执行器需要标记为 async。
+                const buffer = await file.arrayBuffer();
+                const u8 = new Uint8Array(buffer);
+
+                // 调用 fflate.unzip。这是一个异步函数，它接受一个回调。
+                // 它会在内部启动 Worker，执行解压，完成后调用我们的回调。
+                fflate.unzip(u8, (err, unzipped) => {
+                    // a. 如果解压过程出错，则 reject Promise。
+                    if (err) {
+                        console.error(`fflate 异步解压文件 ${file.name} 失败:`, err);
+                        return reject(err);
+                    }
+
+                    // b. 如果解压成功，处理解压后的数据。
+                    const imageFiles = [];
+                    // 遍历解压出的所有文件条目
+                    for (const relativePath in unzipped) {
+                        // 确保是支持的图片，并且不是一个空目录
+                        if (isSupportedImage(relativePath) && unzipped[relativePath].length > 0) {
+                            const fileData = unzipped[relativePath]; // 这是 Uint8Array 数据
+                            const newFileName = `${file.name}/${relativePath}`; // 创建唯一文件名
+
+                            // 从解压出的数据创建新的 File 对象
+                            const imageFile = new File([fileData], newFileName, {
+                                // 尝试从扩展名推断 MIME 类型
+                                type: `image/${relativePath.split('.').pop().toLowerCase()}`
+                            });
+                            imageFiles.push(imageFile);
+                        }
+                    }
+
+                    console.log(`在 ${file.name} 中找到 ${imageFiles.length} 个图片文件。`);
+                    // c. 用包含所有图片文件的数组来 resolve Promise。
+                    resolve(imageFiles);
+                });
+            } catch (e) {
+                // 这个 catch 主要捕获 file.arrayBuffer() 可能发生的错误。
+                reject(e);
+            }
+        });
     }
 
 
@@ -371,45 +401,91 @@ if ('serviceWorker' in navigator) {
     // [新函数] 智能下载处理器
     async function handleDownload() {
         if (processedFiles.length === 0) return;
-
-        // 禁用按钮防止重复点击
         downloadButton.disabled = true;
-        //if (isMobileDevice()) {
-        if (true) {
-            const zip = new JSZip();
 
-            processedFiles.forEach(file => {
-                zip.file(file.name, file.blob);
-            });
+        // --- 1. 定义模拟参数 ---
+        const ESTIMATED_SPEED_MB_PER_SEC = 200; // MB/s，根据您的观察设定，可以调整
 
-            try {
-                const zipBlob = await zip.generateAsync({
-                    type: "blob",
-                    compression: "DEFLATE",
-                    compressionOptions: {level: 9}
-                });
-                downloadFile(zipBlob, `processed-images-${Date.now()}.zip`);
-            } catch (error) {
-                console.error("ZIP 文件生成失败:", error);
-                alert("打包下载失败！");
-            }
+        // --- 2. 获取并重置UI元素 ---
+        const progressWrapper = document.getElementById('progress-wrapper');
+        const progressBar = document.getElementById('zip-progress');
+        const progressText = document.getElementById('progress-percentage');
 
-        } else {
-            // --- 电脑端：多文件分别下载 ---
-            console.log("检测到桌面设备，将分别下载多个文件。");
-            // 为了避免浏览器因为弹出过多下载窗口而拦截，我们使用一个短暂的延迟
+        progressWrapper.style.display = 'block';
+        progressBar.style.width = '0%';
+        progressText.textContent = '0%';
+
+        let progressInterval = null; // 用于存放我们的计时器ID
+
+        try {
+            // --- 3. 并行读取文件并计算总大小 ---
+            console.log("并行读取所有文件并计算总大小...");
+            const readPromises = processedFiles.map(file => file.blob.arrayBuffer());
+            const buffers = await Promise.all(readPromises);
+
+            const dataToZip = {};
+            let totalSizeInBytes = 0;
             processedFiles.forEach((file, index) => {
-                setTimeout(() => {
-                    downloadFile(file.blob, file.name);
-                }, index * 300); // 每隔 300 毫秒下载一个文件
+                const buffer = buffers[index];
+                dataToZip[file.name] = new Uint8Array(buffer);
+                totalSizeInBytes += buffer.byteLength;
             });
-        }
 
-        // 重新启用按钮
-        // 为了避免用户在多文件下载完成前再次点击，可以设置一个更长的延迟
-        setTimeout(() => {
-            downloadButton.disabled = false;
-        }, processedFiles.length * 300 + 500);
+            // --- 4. 启动真正的后台压缩任务 ---
+            const zipPromise = new Promise((resolve, reject) => {
+                fflate.zip(dataToZip, {level: 1}, (err, data) => {
+                    if (err) reject(err);
+                    else resolve(data);
+                });
+            });
+
+            // --- 5. 根据总大小和速度，启动模拟进度条 ---
+            const totalSizeInMB = totalSizeInBytes / (1024 * 1024);
+            const estimatedDurationInMs = (totalSizeInMB / ESTIMATED_SPEED_MB_PER_SEC) * 1000;
+            const startTime = Date.now();
+
+            progressInterval = setInterval(() => {
+                const elapsedTime = Date.now() - startTime;
+                let currentProgress = Math.min((elapsedTime / estimatedDurationInMs) * 100, 99);
+                currentProgress = Math.floor(currentProgress); // 取整
+
+                progressBar.style.width = currentProgress + '%';
+                progressText.textContent = currentProgress + '%';
+
+                if (elapsedTime >= estimatedDurationInMs) {
+                    clearInterval(progressInterval); // 预估时间到，停止更新
+                }
+            }, 200); // 每200毫秒更新一次UI
+
+            // --- 6. 等待真正的压缩任务完成 ---
+            const zipData = await zipPromise;
+
+            // --- 7. 任务完成，清理并显示最终结果 ---
+            clearInterval(progressInterval); // 确保计时器被清除
+            progressBar.style.transition = 'width 0.5s ease-in-out'; // 给最后一步一个更明显的动画
+            progressBar.style.width = '100%';
+            progressText.textContent = '100%';
+
+            const zipBlob = new Blob([zipData], {type: 'application/zip'});
+
+            // 稍微延迟一下再下载，让用户看到100%的状态
+            setTimeout(() => {
+                downloadFile(zipBlob, `processed-images-${Date.now()}.zip`);
+            }, 500);
+
+        } catch (error) {
+            console.error("fflate 异步压缩或模拟进度失败:", error);
+            alert("打包下载失败！");
+        } finally {
+            // 确保无论成功或失败，都能清理和重置UI
+            clearInterval(progressInterval);
+            // 稍微延迟一下再隐藏，避免100%一闪而过
+            setTimeout(() => {
+                downloadButton.disabled = false;
+                progressWrapper.style.display = 'none';
+                progressBar.style.transition = 'width 0.2s ease-out'; // 恢复默认过渡
+            }, 500);
+        }
     }
 })();
 

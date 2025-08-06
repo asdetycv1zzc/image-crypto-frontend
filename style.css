@@ -209,6 +209,67 @@ button:disabled {
     box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15);
 }
 
+.progress-container {
+    width: 90%;
+    max-width: 600px; /* 限制最大宽度 */
+    margin: 25px auto; /* 上下边距和水平居中 */
+    text-align: center;
+    padding: 20px;
+    background-color: #f8f9fa; /* 浅灰色背景 */
+    border-radius: 12px; /* 圆角 */
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05); /* 细微的阴影 */
+}
+
+/* "正在打包..." 的文本标签 */
+.progress-label {
+    margin: 0 0 12px 0;
+    font-size: 1em;
+    font-weight: 500;
+    color: #495057;
+}
+
+/* 进度条背景轨道 */
+.progress-bar-background {
+    width: 100%;
+    height: 22px;
+    background-color: #e9ecef;
+    border-radius: 11px;
+    overflow: hidden;
+    border: 1px solid #dee2e6;
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.06);
+}
+
+/* 进度条前景/填充部分 */
+.progress-bar-foreground {
+    height: 100%;
+    width: 0%; /* 初始为0 */
+    background-color: #007bff;
+    background-image: linear-gradient(45deg, rgba(255, 255, 255, 0.15) 25%, transparent 25%, transparent 50%, rgba(255, 255, 255, 0.15) 50%, rgba(255, 255, 255, 0.15) 75%, transparent 75%, transparent);
+    background-size: 40px 40px;
+    border-radius: 11px;
+    /* 关键：让宽度的变化产生平滑的动画效果 */
+    transition: width 0.2s ease-out;
+}
+
+/* 百分比文本需要重新显示 */
+.progress-percentage-text {
+    display: block;
+    margin-top: 12px;
+    font-size: 1.1em;
+    font-weight: bold;
+    color: #007bff;
+}
+
+/* 定义条纹的动画 */
+@keyframes progress-bar-stripes {
+    from {
+        background-position: 40px 0;
+    }
+    to {
+        background-position: 0 0;
+    }
+}
+
 @keyframes spin {
     to {
         transform: rotate(360deg);

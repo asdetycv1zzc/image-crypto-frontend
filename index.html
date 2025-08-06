@@ -10,42 +10,51 @@
 </head>
 <body>
 
-    <div class="container">
-        <header>
-            <h1>纯客户端图片加密/解密</h1>
-            <p>您的所有图片都将在您的浏览器本地处理，永远不会上传到任何服务器。</p>
-            <p class="supported-formats">支持格式: PNG, JPG/JPEG, BMP</p>
-        </header>
+<div class="container">
+    <header>
+        <h1>图片加密/解密</h1>
+        <p>所有图片都将在浏览器本地处理。</p>
+        <p class="supported-formats">支持格式: PNG, JPG/JPEG, BMP</p>
+    </header>
 
-        <div class="controls">
-            <!-- 这个隐藏的 input 才是真正的文件选择器 -->
-            <input type="file" id="fileInput" multiple accept="image/png, image/jpeg, image/bmp,application/zip,application/x-zip-compressed" style="display: none;">
-            
-            <!-- 这是用户看到的按钮 -->
-            <button id="uploadButton">
-                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-                <span>选择并处理图片</span>
-            </button>
-            
-            <button id="downloadButton" disabled>
-                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                <span>下载全部</span>
-            </button>
-        </div>
+    <div class="controls">
+        <!-- 这个隐藏的 input 才是真正的文件选择器 -->
+        <input type="file" id="fileInput" multiple accept="image/png, image/jpeg, image/bmp,application/zip,application/x-zip-compressed" style="display: none;">
 
-        <!-- 用于显示处理日志和结果的区域 -->
-        <div id="results" class="results-grid">
-            <!-- 结果卡片将动态添加到这里 -->
-        </div>
+        <!-- 这是用户看到的按钮 -->
+        <button id="uploadButton">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+            <span>选择并处理图片</span>
+        </button>
+
+        <button id="downloadButton" disabled>
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            <span>下载全部</span>
+        </button>
     </div>
 
-    <!-- 1. 按顺序加载所有依赖库 -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-    <script src="js/image_processor.js"></script>
+    <!-- ====================================================== -->
+    <!-- ======> 将下面的进度条代码块添加到这里 <====== -->
+    <!-- ====================================================== -->
+    <div id="progress-wrapper" class="progress-container" style="display: none;">
+        <p class="progress-label">正在打包，请稍候...</p>
+        <div class="progress-bar-background">
+            <div id="zip-progress" class="progress-bar-foreground"></div>
+        </div>
+        <span id="progress-percentage" class="progress-percentage-text">0%</span>
+    </div>
 
-    <!-- 2. 最后加载我们的主逻辑脚本 -->
-    <script src="js/script.js"></script>
+
+    <!-- 用于显示处理日志和结果的区域 -->
+    <div id="results" class="results-grid">
+        <!-- 结果卡片将动态添加到这里 -->
+    </div>
+</div>
+
+<!-- 1. 按顺序加载所有依赖库 -->
+<script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js"></script>
+
+<!-- 2. 最后加载我们的主逻辑脚本 -->
+<script src="js/script.js"></script> <!-- 您的脚本名称 -->
 </body>
 </html>
-
-
