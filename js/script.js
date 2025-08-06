@@ -372,37 +372,52 @@ if ('serviceWorker' in navigator) {
     async function handleDownload() {
         if (processedFiles.length === 0) return;
 
+        const progressWrapper = document.getElementById('progress-wrapper');
+        const progressBar = document.getElementById('zip-progress');
+        const progressText = document.getElementById('progress-percentage');
+        progressWrapper.style.display = 'block';
+        progressBar.style.width = '0%';
+        progressText.textContent = '0%';
+
         // 禁用按钮防止重复点击
         downloadButton.disabled = true;
-        //if (isMobileDevice()) {
-        if (true) {
-            const dataToZip = {};
-            for (const file of processedFiles) {
-                // 将 Blob 转为 fflate 需要的 Uint8Array
-                dataToZip[file.name] = new Uint8Array(await file.blob.arrayBuffer());
-            }
+        try {
+            //console.log("并行读取所有文件到 ArrayBuffer...");
+            const readPromises = processedFiles.map(async (file) => {
+                const buffer = await file.blob.arrayBuffer();
+                return [file.name, new Uint8Array(buffer)];
+            });
+            const fileEntries = await Promise.all(readPromises);
+            const dataToZip = Object.fromEntries(fileEntries);
 
-            const zipData = fflate.zipSync(dataToZip, {
-                level: 1 // 推荐等级。9是最慢的，1是最快的。
+            const zipPromise = new Promise((resolve, reject) => {
+                const opts = {
+                    level: 6, // 速度和压缩率的平衡点
+                    onprogress(progress) {
+                        const percentage = Math.round((progress.loaded / progress.total) * 100);
+                        // 3. 更新进度条的宽度和百分比文本
+                        progressBar.style.width = percentage + '%';
+                        progressText.textContent = percentage + '%';
+                    }
+                };
+
+                fflate.zip(dataToZip, opts, (err, data) => {
+                    if (err) reject(err);
+                    else resolve(data);
+                });
             });
 
-            try {
-                const zipBlob = new Blob([zipData], { type: 'application/zip' });
-                downloadFile(zipBlob, `processed-images-${Date.now()}.zip`);
-            } catch (error) {
-                console.error("ZIP 文件生成失败:", error);
-                alert("打包下载失败！");
-            }
+            const zipData = await zipPromise;
+            const zipBlob = new Blob([zipData], {type: 'application/zip'});
+            downloadFile(zipBlob, `processed-images-${Date.now()}.zip`);
 
-        } else {
-            // --- 电脑端：多文件分别下载 ---
-            console.log("检测到桌面设备，将分别下载多个文件。");
-            // 为了避免浏览器因为弹出过多下载窗口而拦截，我们使用一个短暂的延迟
-            processedFiles.forEach((file, index) => {
-                setTimeout(() => {
-                    downloadFile(file.blob, file.name);
-                }, index * 300); // 每隔 300 毫秒下载一个文件
-            });
+        } catch (error) {
+            console.error("fflate 异步压缩失败:", error);
+            alert("打包下载失败！");
+        } finally {
+            // 4. 完成或失败后，重新启用按钮并隐藏进度条
+            downloadButton.disabled = false;
+            progressWrapper.style.display = 'none';
         }
 
         // 重新启用按钮
