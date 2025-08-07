@@ -14,7 +14,9 @@
     <header>
         <h1>图片加密/解密</h1>
         <p>所有图片都将在浏览器本地处理。</p>
-        <p class="supported-formats">支持格式: PNG, JPG/JPEG, BMP</p>
+        <p>第一次打开页面时需要一段时间加载模块，请耐心等待；如果超过一分钟上传按钮仍未就绪，请考虑科学上网。</p>
+        <p>成功加载一次后即可离线使用；如要获取最新版本，请清空浏览数据并按Ctrl+Shift+R强制刷新。</p>
+        <p class="supported-formats">支持格式: PNG, JPG/JPEG, BMP, ZIP(无加密)</p>
     </header>
 
     <div class="controls">
@@ -24,7 +26,7 @@
         <!-- 这是用户看到的按钮 -->
         <button id="uploadButton">
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-            <span>选择并处理图片</span>
+            <span>选择文件</span>
         </button>
 
         <button id="downloadButton" disabled>
