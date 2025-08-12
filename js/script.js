@@ -1,8 +1,10 @@
 // script.js (Cleaned Version)
 
 document.addEventListener('DOMContentLoaded', (event) => {
-    const uploadButton = document.getElementById('uploadButton');
-    if (uploadButton) uploadButton.disabled = true;
+    const uploadImageButton = document.getElementById('uploadImageButton');
+    const uploadZipButton = document.getElementById('uploadZipButton');
+    if (uploadImageButton) uploadImageButton.disabled = true;
+    if (uploadZipButton) uploadZipButton.disabled = true;
 });
 
 
@@ -24,23 +26,17 @@ if ('serviceWorker' in navigator) {
     const MAX_WORKERS = navigator.hardwareConcurrency || 4;
     console.log(`初始化 ${MAX_WORKERS} 个 Worker...`);
 
-    const workerPool = [];      // 存储我们的工人（Worker）对象和他们的状态
-    const taskQueue = [];       // 等待被处理的图片任务队列
-    let processedFiles = [];    // 存储处理完成的结果
-    let isWorking = false;      // 一个标志，用于判断整个处理流程是否在进行中
-
-// --- 2. Worker 池的初始化 ---
+    const workerPool = [];
+    const taskQueue = [];
+    let processedFiles = [];
+    let isWorking = false;
 
     for (let i = 0; i < MAX_WORKERS; i++) {
         const worker = new Worker('js/crypto-worker.js');
 
-        // 为每个 worker 设置消息处理器
         worker.onmessage = (event) => {
             handleWorkerMessage(worker, event.data);
         };
-
-        // 将 worker 及其状态存入池中
-        // 初始时，所有 worker 都被认为是“忙碌”的，直到它们发回 'ready' 消息
         workerPool.push({worker: worker, isBusy: true});
     }
 
@@ -53,31 +49,20 @@ if ('serviceWorker' in navigator) {
                 checkIfAllDone();
                 return; // 退出循环和函数
             }
-
-            // 寻找一个不忙的工人
             const freeWorkerWrapper = workerPool.find(w => !w.isBusy);
             if (!freeWorkerWrapper) {
-                return; // 所有工人都在忙，退出循环和函数
+                return;
             }
 
-            // --- 以下是成功派发一个任务的逻辑 ---
-
-            // 从队列头部取出一个任务
             const task = taskQueue.shift();
 
-            // 将工人标记为“忙碌”
             freeWorkerWrapper.isBusy = true;
-
-            // 在UI上更新卡片状态
             updateCardStatus(task.file.name, 'processing', '正在处理...', null);
 
-            // 将任务发送给工人
             freeWorkerWrapper.worker.postMessage({
                 fileName: task.file.name,
                 fileBuffer: task.buffer
             }, [task.buffer]);
-
-            // **核心修正**: 循环将继续，立即尝试为下一个任务寻找下一个空闲的工人。
         }
     }
 
@@ -147,7 +132,8 @@ if ('serviceWorker' in navigator) {
             console.log("所有图片处理完成！");
 
             // 启用UI按钮
-            uploadButton.disabled = false;
+            uploadImageButton.disabled = false;
+            uploadZipButton.disabled = false;
             if (processedFiles.length > 0) {
                 downloadButton.disabled = false;
             }
@@ -227,19 +213,26 @@ if ('serviceWorker' in navigator) {
 
 
     // --- 前端交互逻辑 ---
-    const fileInput = document.getElementById('fileInput');
-    const uploadButton = document.getElementById('uploadButton');
+    const imageInput = document.getElementById('imageInput');
+    const zipInput = document.getElementById('zipInput');
+    const uploadImageButton = document.getElementById('uploadImageButton');
+    const uploadZipButton = document.getElementById('uploadZipButton');
     const downloadButton = document.getElementById('downloadButton');
     const resultsGrid = document.getElementById('results');
     const dropZone = document.querySelector('.container');
 
-    uploadButton.addEventListener('click', () => fileInput.click());
-    fileInput.addEventListener('change', (event) => {
+    uploadImageButton.addEventListener('click', () => imageInput.click());
+    uploadZipButton.addEventListener('click', () => zipInput.click());
+
+    const handleFileSelection = (event) => {
         const files = event.target.files;
         if (files.length > 0) {
             handleFileUpload(Array.from(files));
         }
-    });
+        event.target.value = '';
+    };
+    imageInput.addEventListener('change', handleFileSelection);
+    zipInput.addEventListener('change', handleFileSelection);
     downloadButton.addEventListener('click', handleDownload);
     dropZone.addEventListener('dragover', (event) => {
         event.preventDefault();
@@ -289,7 +282,8 @@ if ('serviceWorker' in navigator) {
         processedFiles = [];
         taskQueue.length = 0; // 确保清空旧的任务
         isWorking = true;     // 开始工作！
-        uploadButton.disabled = true;
+        uploadImageButton.disabled = true;
+        uploadZipButton.disabled = true;
         downloadButton.disabled = true;
 
         try {
@@ -303,7 +297,8 @@ if ('serviceWorker' in navigator) {
             if (allImageFiles.length === 0) {
                 resultsGrid.innerHTML = '<p>未在您上传的文件或压缩包中找到支持的图片 (PNG, JPG, BMP)。</p>';
                 isWorking = false; // 没有任务，直接结束
-                uploadButton.disabled = false;
+                uploadImageButton.disabled = false;
+                uploadZipButton.disabled = false;
                 return;
             }
 
@@ -333,7 +328,8 @@ if ('serviceWorker' in navigator) {
             console.error("处理上传文件时发生严重错误:", error);
             resultsGrid.innerHTML = `<p class="status error">处理失败: ${error.message}</p>`;
             isWorking = false; // 发生严重错误，结束工作
-            uploadButton.disabled = false;
+            uploadImageButton.disabled = false;
+            uploadZipButton.disabled = false;
         }
     }
 
