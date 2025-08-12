@@ -224,13 +224,6 @@ if ('serviceWorker' in navigator) {
     uploadImageButton.addEventListener('click', () => imageInput.click());
     uploadZipButton.addEventListener('click', () => zipInput.click());
 
-    uploadButton.addEventListener('click', () => fileInput.click());
-    fileInput.addEventListener('change', (event) => {
-        const files = event.target.files;
-        if (files.length > 0) {
-            handleFileUpload(Array.from(files));
-        }
-    });
     const handleFileSelection = (event) => {
         const files = event.target.files;
         if (files.length > 0) {
